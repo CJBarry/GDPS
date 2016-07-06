@@ -40,7 +40,9 @@ prop <- function(state, t.new, Delta.t, newcbf, por, statei = NULL, Rf = 1, sorb
   if(np > MXP.def) write(dattxt(por, np, dis), paste0(dmrt, ".dat")) #only rewrite when more particles are required (saves memory otherwise)
   
   #run MODPATH
+  tm <- Sys.time()
   system(paste0(mpexe, " ", dmrt, ".rsp"), intern = TRUE, wait = TRUE, show.output.on.console = FALSE)
+  if(file.mtime("pathline") < tm - 5) stop("MODPATH failed") #small buffer to allow for very fast run times
   
   #MODPATHmass add on
   ptldf <- fread("pathline", skip = 1L)

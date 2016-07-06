@@ -14,8 +14,8 @@ source(paste0(gendir, "MT3D.R")) #for the array writing function RIARRAY
 source(paste0(gendir, "MODPATHmass.R"))
 
 #functions for propagate and coalesce stages
-source("coalesce.R")
-source("GDPSfun.R")
+source("C:/Users/cjb309/Documents/GitHub/GDPS/src/coalesce.R")
+source("C:/Users/cjb309/Documents/GitHub/GDPS/src/GDPSfun.R")
 
 od <- getwd(); setwd(mfdir)
 dis <- read.DIS(paste0(mfrt, ".dis"))
@@ -153,6 +153,7 @@ if(write.dat || !file.exists(paste0(dmrt, ".dat"))) write(dattxt(phi_e, MXP.def,
 #time steps: ensured that they do not extend beyond the time period of the MODFLOW model
 tvals <- seq(ifelse(start.t >= MFt0, start.t, MFt0),
              ifelse(end.t < tail(gwdata$time, 1L) + MFt0, end.t, tail(gwdata$time, 1L) + MFt0), Delta.t)
+if(last(tvals) == end.t) tvals <- c(tvals, end.t) # ensure get to end even if duration is not multiple of Delta.t
 cat("simulation period is from", tvals[1L], "to", tail(tvals, 1L), "\n")
 
 #initialise outflux data
@@ -186,6 +187,29 @@ if(sorb) immob <- rep(list(data.table(ts = integer(0L),
                                       L = integer(0L),
                                       zo = double(0L),
                                       m = double(0L))), length(tvals))
+
+# if an initial condition is specified
+if(load.init){
+  res.init <- list.load(init.from)
+  if(!any(res.init$time < start.t)){
+    warning("specified initial state starts after start time for current simulation, so no starting plume is given")
+  }else{
+    #find best time step to use
+    ts.init <- sum(res.init$time < start.t) # the number of time steps before current simulation start time
+    
+    #adjust start time and time points
+    start.t <- res.init$time[ts.init]
+    tvals <- unique(c(seq(start.t, tvals[1L], Delta.t), tvals))
+    
+    #read plume into initial conditions
+    mob[[1L]] <- res.init$plume[ts == ts.init]; mob[[1L]][, z := NULL]
+    if(sorb && "sorbed" %chin% names(res.init)){
+      immob[[1L]] <- res.init$sorbed[ts == ts.init]; immob[[1L]][, z := NULL]
+    }
+    
+    rm(res.init, ts.init)
+  }
+}
 
 for(tPt in 2:length(tvals)){
   st.time <- Sys.time()

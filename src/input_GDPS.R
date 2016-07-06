@@ -39,7 +39,14 @@ xy0 <- cbind(x = c(),
              y = c())
 L <- as.integer(c())
 zo <- c()
-rel.fun <- list(function() ...)
+rel.fun <- list(function(t) 1)
+
+#initial state: normally leave load.init = FALSE
+#load.init = TRUE allows the user to load in a plume from a previous simulation as the initial state of the current simulation.  The script automatically takes the nearest time step before the specified simulation start of the current simulation and adjusts the simulation period accordingly.
+#init.from is then the RDS file name from which the initial plume should be read.
+#The plume may be from a different MODFLOW model, but the co-ordinates and time scale must match (further options may be added later to allow simple translations in time and space, but these would only be needed in exceptional circumstances).
+load.init <- FALSE
+if(load.init) init.from <- ""
 
 #dispersivity; if vdepD the DL and DT represent aL and aT (dispersion coefficients rather that dispersivities)
 #DV is vertical dispersion coefficient or dispersivity if ThreeDD is TRUE
