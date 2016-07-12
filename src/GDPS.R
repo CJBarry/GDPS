@@ -329,16 +329,16 @@ mob[, {
   #perform the kernel smooth in 2 or 3 dimensions
   k <- kde(cbind(x, y, if(ThreeDK) z),
            H = diag(c(rep(smd[1L]^2, 2L), if(ThreeDK) smd[2L]^2), ifelse(ThreeDK, 3L, 2L)), # should be ^3 if ThreeDK?
-           gridsize = nkcell,
+           bgridsize = nkcell, binned = TRUE,
            xmin = c(MFxy0, if(ThreeDK) Kzlim[1L]), # minima in all dimensions
            xmax = c(MFxy0 + c(MFdx, MFdy), if(ThreeDK) Kzlim[2L]), # maxima in all dimensions
            w = m/mean(m)) # weights (kde insists that weights sum to the number of points, corrected later)
   
   # scale the results to represent concentration
   if(ThreeDK){
-    ksOUT[,,, ts] <<- k$estimate*sum(m)/Vkcell
+    ksOUT[,,, ts] <<- k$estimate*sum(m)
   }else{
-    ksOUT[,, ts] <<- k$estimate*sum(m)/Vkcell
+    ksOUT[,, ts] <<- k$estimate*sum(m)
   }
   
   # save the evaluation points and the H matrix
