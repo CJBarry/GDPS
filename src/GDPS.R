@@ -292,14 +292,15 @@ for(tPt in 2:length(tvals)){
   print(diff(c(st.time, release = rls.time, propagate = prop.time, coalesce = co.time, plot = plot.time)))
 }
 
+#post-process----
 rm(state, statei)
 cat("Simulation complete. Now organising and post-processing results.\n")
 
 cat("binding particle and outflux data into single data tables...\n")
 mob <- rbindlist(mob)
 setkey(mob, ts)
-immob <- rbindlist(immob)
-setkey(immob, ts)
+if(sorb) immob <- rbindlist(immob)
+if(sorb) setkey(immob, ts)
 fluxout <- rbindlist(fluxout[sapply(fluxout, is.data.table)])
 setkey(fluxout, ts)
 
@@ -314,9 +315,9 @@ zexpr <- expression({
   bot + zo*thk
 })
 mob[, z := with(gwdata, eval(zexpr))]
-immob[, z := with(gwdata, eval(zexpr))]
+if(sorb) immob[, z := with(gwdata, eval(zexpr))]
 setcolorder(mob, c("ts", letters[24:26], "L", "zo", "m"))
-setcolorder(immob, c("ts", letters[24:26], "L", "zo", "m"))
+if(sorb) setcolorder(immob, c("ts", letters[24:26], "L", "zo", "m"))
 
 #kernel density estimate and plot
 if(!ThreeDK) nkcell <- nkcell[1:2] # for safety
