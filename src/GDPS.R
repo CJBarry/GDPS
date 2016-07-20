@@ -46,6 +46,21 @@ if(reload.gwdata || !exists("gwdata") || !exists("wtop")){
 MFdx <- diff(range(gwdata$gccs)); MFdy <- diff(range(gwdata$grcs))
 bbox.poly <- cbind(x = c(0, MFdx, MFdx, 0) + MFxy0[1L], y = c(0, 0, MFdy, MFdy) + MFxy0[2L])
 
+#find HDRY
+if(file.exists(paste0(mfdir, mfrt, ".lpf"))){
+  HDRY <- scan(paste0(mfdir, mfrt, ".lpf"), list(integer(), double(), integer()), 1L, comment.char = "#")[[2L]]
+}else if(file.exists(paste0(mfdir, mfrt, ".bcf"))){
+  HDRY <- scan(paste0(mfdir, mfrt, ".bcf"), list(integer(), double(), integer()), 1L, comment.char = "#")[[2L]]
+}else{
+  if(interactive()){
+    HDRY <- as.double(readline("no value for HDRY found from LPF or BCF files; give the expected value for dry cells.  Note that unidentified dry cells can lead to an infinite loop.  Put value: "))
+  }else{warning("No value for HDRY found.  This value is normally found as the second item of the BCF or LPF package files.  Make the appropriate file available or else write a line in the input script: \"HDRY <- ...\" to define.")}
+}
+wtop[abs(wtop) > abs(HDRY)*.99 & abs(wtop) < abs(HDRY)*1.01] <- NA
+#dry cells might as well be no-flow for this algorithm
+#approximate matching because very big HDRY values cause problems with double precision for exact matching
+#assumed that HDRY is well outside range of proper head values
+
 #number of dispersion steps per advection step and ready-solved imprint
 #this has been solved using the analytical diffusion equation and integrating over the areas (or volumes) occupied by each new particle's region; each new particle is placed at the centre of mass of its region
 #the algorithm finds the grid for which these numbers are true, which seems a bit backward, but that is the novelty of this code!
@@ -225,7 +240,8 @@ for(tPt in 2:length(tvals)){
     vs <- vapply(tpts, fun, double(1L)) #fun need not be vectorised
     sum(vs)*dt/100
   }, double(1L))
-  relstate <- cbind(relstate0[relm > 0,], m = relm[relm > 0])
+  if(any(is.na(relm))) warning("source term function returning NA at timestep ", tPt)
+  relstate <- if(any(relm > 0, na.rm = TRUE)) cbind(relstate0[relm > 0,], m = relm[relm > 0])
   
   state <- rbind(relstate, state); if(identical(nrow(state), 0L)) state <- NULL
   if(nrow(relstate) > 0L) mob[[tPt - 1L]] <- rbind(cbind(ts = tPt - 1L, relstate), mob[[tPt - 1L]])
@@ -292,14 +308,17 @@ for(tPt in 2:length(tvals)){
   print(diff(c(st.time, release = rls.time, propagate = prop.time, coalesce = co.time, plot = plot.time)))
 }
 
+#post-process----
 rm(state, statei)
 cat("Simulation complete. Now organising and post-processing results.\n")
 
 cat("binding particle and outflux data into single data tables...\n")
 mob <- rbindlist(mob)
 setkey(mob, ts)
-immob <- rbindlist(immob)
-setkey(immob, ts)
+if(sorb){
+  immob <- rbindlist(immob)
+  setkey(immob, ts)
+}
 fluxout <- rbindlist(fluxout[sapply(fluxout, is.data.table)])
 setkey(fluxout, ts)
 
@@ -314,9 +333,9 @@ zexpr <- expression({
   bot + zo*thk
 })
 mob[, z := with(gwdata, eval(zexpr))]
-immob[, z := with(gwdata, eval(zexpr))]
+if(sorb) immob[, z := with(gwdata, eval(zexpr))]
 setcolorder(mob, c("ts", letters[24:26], "L", "zo", "m"))
-setcolorder(immob, c("ts", letters[24:26], "L", "zo", "m"))
+if(sorb) setcolorder(immob, c("ts", letters[24:26], "L", "zo", "m"))
 
 #kernel density estimate and plot
 if(!ThreeDK) nkcell <- nkcell[1:2] # for safety
