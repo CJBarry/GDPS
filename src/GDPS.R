@@ -315,10 +315,10 @@ cat("Simulation complete. Now organising and post-processing results.\n")
 cat("binding particle and outflux data into single data tables...\n")
 mob <- rbindlist(mob)
 setkey(mob, ts)
-if(sorb){
-  immob <- rbindlist(immob)
-  setkey(immob, ts)
-}
+
+if(sorb) immob <- rbindlist(immob)
+if(sorb) setkey(immob, ts)
+
 fluxout <- rbindlist(fluxout[sapply(fluxout, is.data.table)])
 setkey(fluxout, ts)
 
