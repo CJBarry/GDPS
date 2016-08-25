@@ -20,6 +20,7 @@ source("C:/Users/cjb309/Documents/GitHub/GDPS/src/GDPSfun.R")
 od <- getwd(); setwd(mfdir)
 dis <- read.DIS(paste0(mfrt, ".dis"))
 if(plot.on.go || write.dat) bas <- read.BAS(paste0(mfrt, ".bas"), dis)
+if(!exists("sorb")) sorb <- FALSE
 
 #reorganise groundwater data if not done so (similar idea to CBF and FTL files for MODPATH and MT3D respectively)
 if(reload.gwdata || !exists("gwdata") || !exists("wtop")){
@@ -53,10 +54,10 @@ if(file.exists(paste0(mfdir, mfrt, ".lpf"))){
   HDRY <- scan(paste0(mfdir, mfrt, ".bcf"), list(integer(), double(), integer()), 1L, comment.char = "#")[[2L]]
 }else{
   if(interactive()){
-    HDRY <- as.double(readline("no value for HDRY found from LPF or BCF files; give the expected value for dry cells.  Note that unidentified dry cells can lead to an infinite loop.  Put value: "))
-  }else{warning("No value for HDRY found.  This value is normally found as the second item of the BCF or LPF package files.  Make the appropriate file available or else write a line in the input script: \"HDRY <- ...\" to define.")}
+    HDRY <- eval(parse(text = (readline("no value for HDRY found from LPF or BCF files; give the expected value for dry cells.  Note that unidentified dry cells can lead to an infinite loop.  Put value: "))))
+  }else warning("No value for HDRY found.  This value is normally found as the second item of the BCF or LPF package files.  Make the appropriate file available or else write a line in the input script: \"HDRY <- ...\" to define.")
 }
-wtop[abs(wtop) > abs(HDRY)*.99 & abs(wtop) < abs(HDRY)*1.01] <- NA
+if(exists("HDRY")) wtop[abs(wtop) > abs(HDRY)*.99 & abs(wtop) < abs(HDRY)*1.01] <- NA
 #dry cells might as well be no-flow for this algorithm
 #approximate matching because very big HDRY values cause problems with double precision for exact matching
 #assumed that HDRY is well outside range of proper head values
@@ -168,7 +169,7 @@ if(write.dat || !file.exists(paste0(dmrt, ".dat"))) write(dattxt(phi_e, MXP.def,
 #time steps: ensured that they do not extend beyond the time period of the MODFLOW model
 tvals <- seq(ifelse(start.t >= MFt0, start.t, MFt0),
              ifelse(end.t < tail(gwdata$time, 1L) + MFt0, end.t, tail(gwdata$time, 1L) + MFt0), Delta.t)
-if(last(tvals) == end.t) tvals <- c(tvals, end.t) # ensure get to end even if duration is not multiple of Delta.t
+if(last(tvals) != end.t) tvals <- c(tvals, end.t) # ensure get to end even if duration is not multiple of Delta.t
 cat("simulation period is from", tvals[1L], "to", tail(tvals, 1L), "\n")
 
 #initialise outflux data
@@ -196,15 +197,13 @@ mob <- rep(list(data.table(ts = integer(0L),
                            m = double(0L))), length(tvals))
 
 # immobile phase list pre-allocation
-if(sorb) immob <- rep(list(data.table(ts = integer(0L),
-                                      x = double(0L),
-                                      y = double(0L),
-                                      L = integer(0L),
-                                      zo = double(0L),
-                                      m = double(0L))), length(tvals))
+if(sorb) immob <- mob
+
+# release particles list pre-allocation
+rel <- mob
 
 # if an initial condition is specified
-if(load.init){
+if(exists("load.init") && load.init){
   res.init <- list.load(init.from)
   if(!any(res.init$time < start.t)){
     warning("specified initial state starts after start time for current simulation, so no starting plume is given")
@@ -226,6 +225,9 @@ if(load.init){
   }
 }
 
+#plot wells on go?
+if(plot.on.go) pw <- "Wells" %in% dimnames(gwdata$data)[[5]]
+
 for(tPt in 2:length(tvals)){
   st.time <- Sys.time()
   
@@ -244,9 +246,15 @@ for(tPt in 2:length(tvals)){
   relstate <- if(any(relm > 0, na.rm = TRUE)) cbind(relstate0[relm > 0,], m = relm[relm > 0])
   
   state <- rbind(relstate, state); if(identical(nrow(state), 0L)) state <- NULL
-  if(nrow(relstate) > 0L) mob[[tPt - 1L]] <- rbind(cbind(ts = tPt - 1L, relstate), mob[[tPt - 1L]])
   
-  if(is.null(state)) next #this time is before the first release
+  # save releases separately
+  if(!is.null(relstate) && nrow(relstate) > 0L){
+    rel[[tPt - 1L]] <- copy(relstate)
+    rel[[tPt - 1L]][, ts := tPt - 1L]
+    setcolorder(rel[[tPt - 1L]], c("ts", "x", "y", "L", "zo", "m"))
+  }
+  
+  if(is.null(state)) next #this time is before the first release or complete clean-up has occurred
   
   rls.time <- Sys.time()
   
@@ -294,14 +302,33 @@ for(tPt in 2:length(tvals)){
   }
   
   if(plot.on.go && tPt != 1L && !is.null(mob[[tPt - 1L]])){
-    mob[[tPt - 1L]][, {
-      maxm <- max(m)
-      for(lay in sort(unique(L))){
-        with(gwdata, MFimage(bas$IBOUND[,, lay], gccs + MFxy0[1L], grcs + MFxy0[2L], col = c("blue", "grey", "white"), zlim = c(-1, 1), show.range = F, xlab = "easting", ylab = "northing"))
-        points(x[L == lay], y[L == lay], col = rgb(1, 0, 0, m[L == lay]/maxm), pch = 16L)
-        title(main = paste0("t = ", tvals[tPt - 1L], ", layer ", lay), sub = paste0("maximum mass = ", signif(maxm, 4L)))
+    maxm <- max(mob[[tPt - 1L]]$m, rel[[tPt - 1L]]$m)
+    mfts <- cellref.loc(tvals[tPt - 1L], c(0, gwdata$time) + MFt0)
+    for(lay in sort(unique(c(mob[[tPt - 1L]]$L, rel[[tPt - 1L]]$L)))){
+      #plot model active region, with constant heads shown in blue
+      with(gwdata, MFimage(bas$IBOUND[,, lay], gccs + MFxy0[1L], grcs + MFxy0[2L],
+                           col = c("blue", "grey", "white"), zlim = c(-1, 1),
+                           xlab = "easting", ylab = "northing"))
+      #plot particles, with opacity indicating mass
+      mob[[tPt - 1L]][L == lay, points(x, y, col = rgb(.63, .13, .94, m[L == lay]/maxm), pch = 16L)]
+      rel[[tPt - 1L]][L == lay, points(x, y, col = rgb(.63, .13, .94, m[L == lay]/maxm), pch = 16L)]
+      
+      #add title and indication of mass magnitude
+      title(main = paste0("t = ", tvals[tPt - 1L], ", layer ", lay),
+            sub = paste0("maximum mass = ", signif(maxm, 4L)))
+      if(pw){
+        #plot active wells in this layer
+        with(gwdata, MFimage(data[,, lay, mfts, "Wells"] != 0,
+                             gccs + MFxy0[1L], grcs + MFxy0[2L], 0:1, c("transparent", "red"),
+                             add = TRUE))
+        #plot active wells in other layers
+        if(any(lay != unique(L))){
+          with(gwdata, MFimage(rowSums(data[,, -lay, mfts, "Wells", drop = FALSE], dims = 2L) != 0,
+                               gccs + MFxy0[1L], grcs + MFxy0[2L], 0:1, c("transparent", "#FF000080"),
+                               add = TRUE))
+        }
       }
-    }]
+    }
   }
   
   plot.time <- Sys.time()
@@ -319,6 +346,9 @@ setkey(mob, ts)
 if(sorb) immob <- rbindlist(immob)
 if(sorb) setkey(immob, ts)
 
+rel <- rbindlist(rel)
+setkey(rel, ts)
+
 fluxout <- rbindlist(fluxout[sapply(fluxout, is.data.table)])
 setkey(fluxout, ts)
 
@@ -332,31 +362,35 @@ zexpr <- expression({
   thk <- wtop[cbind(C, R, L, mfts)] - bot
   bot + zo*thk
 })
+
 mob[, z := with(gwdata, eval(zexpr))]
 if(sorb) immob[, z := with(gwdata, eval(zexpr))]
+rel[, z := with(gwdata, eval(zexpr))]
+
 setcolorder(mob, c("ts", letters[24:26], "L", "zo", "m"))
 if(sorb) setcolorder(immob, c("ts", letters[24:26], "L", "zo", "m"))
+setcolorder(rel, c("ts", letters[24:26], "L", "zo", "m"))
 
 #kernel density estimate and plot
 if(!ThreeDK) nkcell <- nkcell[1:2] # for safety
 ksOUT <- array(NA_real_, dim = c(nkcell, ts = length(tvals)))
 ksDATA <- NULL
-Vkcell <- MFdx*MFdy*(if(ThreeDK) diff(Kzlim) else 1)/prod(nkcell) # ks cell volume
+Vkcell <- MFdx*MFdy*(if(ThreeDK) diff(Kzlim) else 1)/prod(nkcell[1:ifelse(ThreeDK, 3L, 2L)]) # ks cell volume
 cat("Kernel Smooth: timestep      ")
 mob[, {
   #perform the kernel smooth in 2 or 3 dimensions
   k <- kde(cbind(x, y, if(ThreeDK) z),
            H = diag(c(rep(smd[1L]^2, 2L), if(ThreeDK) smd[2L]^2), ifelse(ThreeDK, 3L, 2L)), # should be ^3 if ThreeDK?
-           gridsize = nkcell,
+           gridsize = nkcell[1:ifelse(ThreeDK, 3L, 2L)],
            xmin = c(MFxy0, if(ThreeDK) Kzlim[1L]), # minima in all dimensions
            xmax = c(MFxy0 + c(MFdx, MFdy), if(ThreeDK) Kzlim[2L]), # maxima in all dimensions
-           w = m/mean(m)) # weights (kde insists that weights sum to the number of points, corrected later)
+           w = m/mean(m)) # weights (kde insists that weights sum to the number of points, so normalised concentration is returned; the result is corrected later to convert to true concentration)
   
   # scale the results to represent concentration
   if(ThreeDK){
-    ksOUT[,,, ts] <<- k$estimate*sum(m)/Vkcell
+    ksOUT[,,, ts] <<- k$estimate*sum(m)
   }else{
-    ksOUT[,, ts] <<- k$estimate*sum(m)/Vkcell
+    ksOUT[,, ts] <<- k$estimate*sum(m)
   }
   
   # save the evaluation points and the H matrix
@@ -370,12 +404,15 @@ natss <- apply(ksOUT, ifelse(ThreeDK, 4L, 3L), function(ts) all(is.na(ts)))
 
 ksOUT <- do.call(`[`, c(list(ksOUT), rep(list(bquote()), ifelse(ThreeDK, 3L, 2L)), list(!natss, drop = F)))
 ksDATA$time <- tvals[!natss]
+ksDATA$nkcell <- nkcell
+ksDATA$Vkcell <- Vkcell
 
 if(save.res) cat("saving...\n")
 if(save.res) list.save(list(plume = mob,
                             sorbed = if(sorb) immob,
-                            KSplume = list(ksOUT, ksDATA, "smooth" = smd,
-                                           "number of divisions" = nkcell),
+                            release = rel,
+                            KSplume = list(k = ksOUT, info = ksDATA, "smooth" = smd[if(ThreeDK) 1:2 else 1L],
+                                           "number of divisions" = nkcell, "kcell volume or area" = Vkcell),
                             lostmass = massloss,
                             fluxout = fluxout,
                             time = tvals,
