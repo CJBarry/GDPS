@@ -150,28 +150,38 @@ prop <- function(state, t.new, Delta.t, newcbf, por, statei = NULL, Rf = 1, sorb
     
     if(ThreeDD){
       znew3D <- r[c(3L, 5L), 3L] + z
-      Lnew[c(3L, 5L)] <- cellref.loc(znew3D,
-                                     rev(c(wtop[C[4L], R[4L], 1L, mfts], gwdata$elev[C[4L], R[4L], -1L])),
-                                     TRUE)
-      bot <- gwdata$elev[C[4L], R[4L], Lnew[c(3L, 5L)] + 1L]
-      top <- wtop[C[4L], R[4L], Lnew[c(3L, 5L)], mfts]
+      NLAY <- dim(gwdata$elev)[3L] - 1L
+      nwet <- sum(!is.na(wtop[C[4L], R[4L],, mfts]))
+      #depth divides
+      # the water table is repeated for the number of dry or partially saturated cells in the column and then the layer bottoms are used
+      # the length of ddivs will always be NLAY + 1
+      # should ensure that a particle is never labelled with a layer that is dry at its location
+      ddivs <- c(rep(wtop[C[4L], R[4L], NLAY - nwet + 1L, mfts], NLAY - nwet + 1L),
+                 gwdata$elev[C[4L], R[4L], seq(to = NLAY, by = 1L, length.out = nwet) + 1L])
+      Lnew[c(3L, 5L)] <- cellref.loc(znew3D, rev(ddivs), TRUE)
+      bot <- ddivs[Lnew[c(3L, 5L)] + 1L]
+      top <- ddivs[Lnew[c(3L, 5L)]]
       zonew[c(3L, 5L)] <- (znew3D - bot)/(top - bot)
       
       #retain.vloss will reflect back any mass that has been lost out of the model vertically
       while(retain.vloss && any(!Lnew %in% 1:(nlay <- dim(gwdata$data)[3L]))){
-        overshoot <- znew3D - wtop[C[4L], R[4L], 1L, mfts] #only relevant for particles that are too high
+        # determine whether and how far particles are above the water column or below the model domain
+        # the overshoot is relative to the highest wtop for in non-dry cells at the xy location
+        wheight <- max(wtop[C[4L], R[4L],, mfts], na.rm = TRUE)
+        overshoot <- znew3D - wheight #only relevant for particles that are too high
         undershoot <- gwdata$elev[C[4L], R[4L], nlay + 1L] - znew3D #ditto for too low
-        znew3D[overshoot > 0] <- wtop[C[4L], R[4L], 1L, mfts] - overshoot[overshoot > 0]
+        
+        #new z values by reflection
+        znew3D[overshoot > 0] <- wheight - overshoot[overshoot > 0]
         znew3D[undershoot > 0] <- gwdata$elev[C[4L], R[4L], nlay + 1L] + undershoot[undershoot > 0]
         
-        Lnew[c(3L, 5L)] <- cellref.loc(znew3D,
-                                       rev(c(wtop[C[4L], R[4L], 1L, mfts], gwdata$elev[C[4L], R[4L], -1L])),
-                                       TRUE)
-        bot <- gwdata$elev[C[4L], R[4L], Lnew[c(3L, 5L)] + 1L]
-        top <- wtop[C[4L], R[4L], Lnew[c(3L, 5L)], mfts]
+        #re-determine L and z offset
+        Lnew[c(3L, 5L)] <- cellref.loc(znew3D, rev(ddivs), TRUE)
+        bot <- ddivs[Lnew[c(3L, 5L)] + 1L]
+        top <- ddivs[Lnew[c(3L, 5L)]]
         zonew[c(3L, 5L)] <- (znew3D - bot)/(top - bot)
         
-        # Very occasionally this loop may need to repeat if particles are reflected out the other side.  But such models are probably not very well built.
+        # Very occasionally this loop may need to repeat if particles are reflected out the other side.  But such models are probably not very well built.  Generally speaking, the `while` should be thought of as `if`, as it should only be needed once.
       }
     }
     
@@ -189,7 +199,7 @@ prop <- function(state, t.new, Delta.t, newcbf, por, statei = NULL, Rf = 1, sorb
 }
 
 #coalescing function----
-#finds particles which are close together and lumps them to new particle at centre of mass - saves time by moderating the number of particles in play
+#finds particles which are close together and lumps them to new particle at centre of mass - essential moderater of particle count
 #additionally coalesces particles below a certain mass with nearest non-insignificant particle - this happens after the initial coalescence and avoids spending time tracking particles with negligible mass whilst still ensuring conservation of mass
 #expected columns: 1 - x, 2 - y, 3 - z, 4 - zo, 5 - L, 6 - m
 coalesce <- function(state, cd, mm = 0, t){
