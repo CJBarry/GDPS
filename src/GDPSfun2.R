@@ -29,7 +29,10 @@ prop <- function(state, t.new, Delta.t, newcbf, por, statei = NULL, Rf = 1, sorb
   }
   np <- nrow(state)
   
-  if(decaysorbed) statei[, m := m*exp(-lambda*Delta.t)]
+  if(decaysorbed && lambda){
+    degraded[tPt] <<- sum(statei$m*(1 - lambda*Delta.t))
+    statei[, m := m*exp(-lambda*Delta.t)]
+  }
   
   #advect...
   
@@ -80,7 +83,7 @@ prop <- function(state, t.new, Delta.t, newcbf, por, statei = NULL, Rf = 1, sorb
                                                           by = c("C", "R", "L")]
   
   massloss[tPt] <<- sum(mt$loss) + massloss[tPt]
-  if(lambda) degraded[tPt] <<- mt$traces[, sum(mrl)]
+  if(lambda) degraded[tPt] <<- degraded[tPt] + mt$traces[, sum(mrl)]
   
   
   #update masses based on what was lost to sinks

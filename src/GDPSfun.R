@@ -3,10 +3,6 @@
 # the super-functions used for the propagate and coalesce stages of GDPS
 
 #propagation function----
-#2D rotation matrix - produces 3D array with a phi given as a vector
-rotmat2D <- function(phi, v = 1) structure({
-  mapply(function(phi, v) v*c(cos(phi), sin(phi), -sin(phi), cos(phi)), phi, v)
-}, dim = c(2L, 2L, length(phi)))
 
 #function to calculate the mass distribution from one particle after one timestep
 #returns a matrix with six columns: x, y, z, L, z_off, m
@@ -36,41 +32,54 @@ prop <- function(state, t.new, Delta.t, newcbf, por, statei = NULL, Rf = 1, sorb
   #advect...
   
   write(rsptxt(t.new - MFt0, newcbf), paste0(dmrt, ".rsp"))
-  write(dmoc.PTR(cbind(as.matrix(state[, list(x - MFxy0[1L], y - MFxy0[2L], zo, L)]), t.old - MFt0)), paste0(dmrt, ".ptr"))
+  write(gd.PTR(state[, list(x = x - MFxy0[1L],
+                            y = y - MFxy0[2L],
+                            L, zo)], t.old - MFt0),
+        paste0(dmrt, ".ptr"))
   if(np > MXP.def) write(dattxt(por, np, dis), paste0(dmrt, ".dat")) #only rewrite when more particles are required (saves memory otherwise)
   
   #run MODPATH
   tm <- Sys.time()
   system(paste0(mpexe, " ", dmrt, ".rsp"), intern = TRUE, wait = TRUE, show.output.on.console = FALSE)
-  if(file.mtime("pathline") < tm - 5) stop("MODPATH failed") #small buffer to allow for very fast run times
+  if(!file.exists("pathline") || file.mtime("pathline") < tm - 5) stop("MODPATH failed") # tests whether MODPATH has run successfully by checking whether there is a new pathline file; there is a five-second grace period in case of very fast run times and slight timing inconsistencies
   
   #MODPATHmass add on
   ptldf <- fread("pathline", skip = 1L)
-  reld <- seq_len(np) %in% ptldf[, V1] #which particles released? (i.e. started in active region)
-  ptldf[, V6 := V6 + MFt0] # time correction (column not renamed at this point)
+  setnames(ptldf, PTL.headers[1:10])
+  if(lRAM2){
+    #check if any mass has gone out of bounds
+    if(any(escape <- ptldf[, C < Crange[1L] | C > Crange[2L] | R < Rrange[1L] | R > Rrange[2L]])){
+      ptldf <- ptldf[!escape,]
+      warning("mass escaped from artificially imposed bounds during time step ", tPt,
+              "; this mass is not recorded as part of massloss")
+    }
+    #correct columns for giving to MODPATHmass, which will match with gwdata
+    ptldf[, c("C", "R") := list(C - Crange[1L] + 1L, R - Rrange[1L] + 1L)]
+  }
+  reld <- seq_len(np) %in% ptldf$ptlno #which particles released? (i.e. started in active region)
+  ptldf[, t := t + MFt0] # time correction
   mt <- ptl.masstrack(ptldf, gwdata, wtop, por, state$m, retain.storage = TRUE,
-                      outflux = TRUE, loss = TRUE, tlumpoutflux = TRUE, end.t = t.new, linear.decay = lambda)
+                      outflux = TRUE, loss = TRUE, tlumpoutflux = TRUE,
+                      react.loss = TRUE, outflux.array = FALSE,
+                      end.t = t.new, linear.decay = lambda)
   rm(ptldf) #relieve memory
   
   #collect pathline data and extract necessary columns
   #positions converted to absolute grid reference at this stage
   #key value ptlno is retained
-  xyzm <- mt$traces[, llply(.SD, tail, 1L), by = ptlno, .SDcols = c("x", "y", "z", "z_off", "L", "m")]
+  xyzm <- mt$traces[, list(ptlno, x, y, z, z_off, L, t, m)]
   setnames(xyzm, "z_off", "zo")
   xyzm[, c("x", "y") := list(x + MFxy0[1L], y + MFxy0[2L])] # convert back to global co-ordinates
   
   #sinks...
   
   #update outflux and loss data
-  if(any(mt$outflux != 0)) fluxout[[tPt]] <<- {
-    im <- which(mt$outflux != 0, arr.ind = TRUE)
-    vals <- mt$outflux[im]
-    dt <- data.table(tPt, im, vals/Delta.t)
-    setnames(dt, c("ts", "C", "R", "L", "J_out"))
-  }
-  massloss[tPt - 1L] <<- sum(mt$loss) + massloss[tPt - 1L]
+  if(any(mt$traces$ml != 0)) fluxout[[tPt]] <<- mt$traces[, list(ts = tPt, J_out = sum(ml)/Delta.t),
+                                                          by = c("C", "R", "L")]
   
-  if(all(xyzm$m == 0)) return(xyzm) #note will return if nrow(xyzm) == 0, which is good (all(logical(0L)) = TRUE)
+  massloss[tPt] <<- sum(mt$loss) + massloss[tPt]
+  if(lambda) degraded[tPt] <<- mt$traces[, sum(mrl)]
+  
   
   #update masses based on what was lost to sinks
   #the following line is a TEMPORARY FIX to the problem of particles being dispersed into no flow cells - mass will be lost in this way
@@ -79,9 +88,23 @@ prop <- function(state, t.new, Delta.t, newcbf, por, statei = NULL, Rf = 1, sorb
   #however, you'd expect to get some back as well over longer timescales (back-diffusion), which this doesn't show
   state <- state[reld,]
   
-  xy.old <- state[, list(x, y)] #original positions
-  delta.xy <- xyzm[, list(x, y)] - xy.old #not got 3D rotation yet! (not sure that I'd want it anyway - shouldn't dispersion tensor be in line with layers)
-  v <- if(vdepD) sqrt(delta.xy$x^2 + delta.xy$y^2)/Delta.t else 1
+  # xy.old <- state[, list(x, y)] #original positions
+  # delta.xy <- xyzm[, list(x, y)] - xy.old #not got 3D rotation yet! (not sure that I'd want it anyway - shouldn't dispersion tensor be in line with layers)
+  
+  # average travel speed of each particle
+  # note sum(double(0L)) = 0, so paths with one entry will return v = 0 (in case of instant capture) - OK
+  v <- if(vdepD) xyzm[, sum(sqrt(diff(x)^2 + diff(y)^2))/diff(range(t)), by = ptlno]$V1 else 1
+  
+  # average direction of travel of each particle
+  # atan2(0, 0) = 0, in case of instant capture - OK
+  phi <- atan2(xyzm[, y[.N] - y[1L], by = ptlno]$V1, xyzm[, x[.N] - x[1L], by = ptlno]$V1)
+  
+  # get end points of pathlines as new positions
+  xyzm <- xyzm[, llply(.SD, last), by = ptlno, .SDcols = c("x", "y", "z", "zo", "L", "t", "m")]
+  if(all(xyzm$m == 0)) return(xyzm) #note will return if nrow(xyzm) == 0, which is good (all(logical(0L)) = TRUE)
+  
+  # collapse ptlno so that it is a sequence from 1 to Npart; avoids complications in using ptlno to index if some of the particles have been lossed or completely drained
+  xyzm[, ptlno := .I]
   
   #disperse...
   
@@ -93,7 +116,6 @@ prop <- function(state, t.new, Delta.t, newcbf, por, statei = NULL, Rf = 1, sorb
   }else{
     2*dispC*(Delta.t*c(DL, DT))^0.5
   }
-  phi <- atan2(delta.xy$y, delta.xy$x) # orientation of displacement (0 along x axis, increasing anti-clockwise)
   
   #finds the positions relative to the original particle (without rotation yet - in the longitudinal and transverse dimensions) for which the pre-determined FD imprint is true
   relpos <- if(ThreeDD){
@@ -106,11 +128,14 @@ prop <- function(state, t.new, Delta.t, newcbf, por, statei = NULL, Rf = 1, sorb
   }
   
   #applies the displacement and rotation according to the particles' movements
-  rots <- rotmat2D(-phi, v) # note that v = 1 if not vdepD; -phi is used because the co-ordinates are on the LHS of %*% (%*% is not commutative)
+  rots <- mapply(function(phi, v){
+    v*matrix(c(cos(-phi), sin(-phi), -sin(-phi), cos(-phi)), 2L, 2L)
+  }, phi, v, SIMPLIFY = "array") # note that v = 1 if not vdepD; -phi is used because the co-ordinates are on the LHS of %*% (%*% is not commutative)
+  
   mfts <- cellref.loc(t.new, c(0, gwdata$time) + MFt0) # MODFLOW timestep number
   if(is.na(mfts)){
     # this covers case for which the last tval is the same as the end time of the MODFLOW model
-    # because cellref.loc uses >= and <, NA is returned in this case, so the time
+    # because cellref.loc uses >= and <, NA is returned in this case
     mfts <- cellref.loc(t.new - Delta.t/100, c(0, gwdata$time) + MFt0) # MODFLOW timestep number re-assessed
   }
   

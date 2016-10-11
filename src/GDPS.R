@@ -491,7 +491,7 @@ for(tPt in 2:nts){
                    xlab = "easting", ylab = "northing"))
       #plot particles, with opacity indicating mass
       mob[[tPt - 1L]][L == lay, points(x, y, col = rgb(.63, .13, .94, m[L == lay]/maxm), pch = 16L)]
-      if(!is.null(rel[[tpt - 1L]]))
+      if(!is.null(rel[[tPt - 1L]]))
         rel[[tPt - 1L]][L == lay, points(x, y, col = rgb(.63, .13, .94, m[L == lay]/maxm), pch = 16L)]
       
       #add title and indication of mass magnitude
