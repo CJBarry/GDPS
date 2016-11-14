@@ -29,7 +29,10 @@ prop <- function(state, t.new, Delta.t, newcbf, por, statei = NULL, Rf = 1, sorb
   }
   np <- nrow(state)
   
-  if(decaysorbed) statei[, m := m*exp(-lambda*Delta.t)]
+  if(decaysorbed && lambda){
+    degraded[tPt] <<- sum(statei$m*(1 - lambda*Delta.t))
+    statei[, m := m*exp(-lambda*Delta.t)]
+  }
   
   #advect...
   
@@ -79,19 +82,12 @@ prop <- function(state, t.new, Delta.t, newcbf, por, statei = NULL, Rf = 1, sorb
   if(any(mt$traces$ml != 0)) fluxout[[tPt]] <<- mt$traces[, list(ts = tPt, J_out = sum(ml)/Delta.t),
                                                           by = c("C", "R", "L")]
   
-  massloss[tPt] <<- sum(mt$loss) + massloss[tPt]
-  if(lambda) degraded[tPt] <<- mt$traces[, sum(mrl)]
+  massloss[["inactive"]][tPt] <<- sum(mt$loss)
+  if(lambda) degraded[tPt] <<- degraded[tPt] + mt$traces[, sum(mrl)]
   
   
   #update masses based on what was lost to sinks
-  #the following line is a TEMPORARY FIX to the problem of particles being dispersed into no flow cells - mass will be lost in this way
-  #a proper fix would require a different imprint for transport along boundaries
-  #that said, it's possible to get some diffusive loss into aquitard material
-  #however, you'd expect to get some back as well over longer timescales (back-diffusion), which this doesn't show
   state <- state[reld,]
-  
-  # xy.old <- state[, list(x, y)] #original positions
-  # delta.xy <- xyzm[, list(x, y)] - xy.old #not got 3D rotation yet! (not sure that I'd want it anyway - shouldn't dispersion tensor be in line with layers)
   
   # average travel speed of each particle
   # note sum(double(0L)) = 0, so paths with one entry will return v = 0 (in case of instant capture) - OK
@@ -106,7 +102,9 @@ prop <- function(state, t.new, Delta.t, newcbf, por, statei = NULL, Rf = 1, sorb
   xyzm <- xyzm[, llply(llply(.SD, last), rep, each = 2L*Ndisppairs), by = ptlno,
                .SDcols = c("x", "y", "z", "zo", "L", "t", "m")]
   if(all(xyzm$m == 0)){
-    xyzm <- xyzm[, llply(.SD, last), by = ptlno, .SDcols = c("x", "y", "z", "zo", "L", "t", "m")]
+    xyzm <- xyzm[, llply(.SD, last), by = ptlno, .SDcols = c("x", "y", "zo", "L", "m")]
+    xyzm[, ptlno := NULL]
+    setcolorder(xyzm, colord)
     return(xyzm) 
     #note will return if nrow(xyzm) == 0, which is good (all(logical(0L)) = TRUE)
   }
@@ -135,11 +133,11 @@ prop <- function(state, t.new, Delta.t, newcbf, por, statei = NULL, Rf = 1, sorb
     
     #in horizontal plane
     rotation1 <- runif(npd, -pi, pi)
-    rotation1 <- rotation1[rep(seq_len(npd), each = 2L)]*c(-1, 1)
+    rotation1 <- rotation1[rep(seq_len(npd), each = 2L)] + c(0, pi)
     
     #from horizontal plane
     rotation2 <- runif(npd, -pi/2, pi/2)
-    rotation2 <- rotation2[rep(seq_len(npd), each = 2L)]*c(-1, 1)
+    rotation2 <- rotation2[rep(seq_len(npd), each = 2L)] + c(0, pi)
     
     cbind(dldt[1L]*dispersion*cos(rotation1)*cos(rotation2),
           dldt[2L]*dispersion*sin(rotation1)*cos(rotation2),
@@ -151,7 +149,7 @@ prop <- function(state, t.new, Delta.t, newcbf, por, statei = NULL, Rf = 1, sorb
     
     #horizontal plane
     rotation <- runif(npd, -pi, pi)
-    rotation <- rotation[rep(seq_len(npd), each = 2L)]*c(-1, 1)
+    rotation <- rotation[rep(seq_len(npd), each = 2L)] + c(0, pi)
     
     cbind(dldt[1L]*dispersion*cos(rotation),
           dldt[2L]*dispersion*sin(rotation))
