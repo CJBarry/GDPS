@@ -9,15 +9,15 @@ library("rlist")
 library("stringr")
 library("abind")
 library("data.table")
-library("ks")
+# library("ks")
 library("sp")
 source(paste0(gendir, "MFread.R"))
 source(paste0(gendir, "MT3D.R")) #for the array writing function RIARRAY
 source(paste0(gendir, "MODPATHmass.R"))
 
 #functions for propagate and coalesce stages
-source("//COLLES-11893/Users/cjb309/Dropbox/Scripts/R/coalesce.R")
-source("//COLLES-11893/Users/cjb309/Documents/GitHub/GDPS/src/GDPSfun2.R")
+source("C:/Users/CJB/GitHub/GDPS/src/coalesce.R")
+source("C:/Users/CJB/GitHub/GDPS/src/GDPSfun2.R")
 
 od <- getwd(); setwd(mfdir)
 dis <- read.DIS(paste0(mfrt, ".dis"))
@@ -97,13 +97,15 @@ if(lRAM){
     wtop <- array(dim = dim(data)[1:4])
     for(tdim in 1L:dim(data)[4L]){
       wtab <- adrop(data[,,, tdim, "Head", drop = FALSE], c(F, F, F, T, T))
-      wtop[,,, tdim] <- ifelse(wtab > elev, wtab, elev)
+      wtop[,,, tdim] <-
+        ifelse(wtab > elev[,, -dim(elev)[3L]],
+               wtab, elev[,, -dim(elev)[3L]])
     }
     wtop
   }))
 }
 
-if(lRAM2 && reload.gwdata || !exists("gwdata") || !exists("wtop")){
+if(lRAM2 && (reload.gwdata || !exists("gwdata") || !exists("wtop"))){
   COLs <- Crange[1L]:Crange[2L]
   ROWs <- Rrange[1L]:Rrange[2L]
   
@@ -178,28 +180,6 @@ if(exists("HDRY") && !lRAM) wtop[abs(wtop) > abs(HDRY)*.99 & abs(wtop) < abs(HDR
 #dry cells might as well be no-flow for this algorithm
 #approximate matching because very big HDRY values cause problems with double precision for exact matching
 #assumed that HDRY is well outside range of proper head values
-
-
-# analytical dispersion parameters ----------------------------------------
-
-#number of dispersion steps per advection step and ready-solved imprint
-#this has been solved using the analytical diffusion equation and integrating over the areas (or volumes) occupied by each new particle's region; each new particle is placed at the centre of mass of its region
-#the algorithm finds the grid for which these numbers are true, which seems a bit backward, but that is the novelty of this code!
-#refer to a2.p340
-if(ThreeDD){
-  #determined by numerical integration
-  # rc <- 0.96645
-  centre <- 0.4
-  edge <- 0.1
-  dispC <- 1.187558
-}else{
-  #analytically determined
-  rc <- sqrt(log(2))
-  centre <- 1 - exp(-rc^2) # 0.5
-  edge <- exp(-rc^2)/4 # (1 - centre)/4 = 0.125
-  dispC <- sqrt(8)/(pi*exp(-rc^2))*(rc*exp(-rc^2) + (sqrt(pi)/2)*(pracma::erfc(rc)))
-}
-
 
 
 # input to MODPATH --------------------------------------------------------
@@ -491,7 +471,7 @@ for(tPt in 2:nts){
                    xlab = "easting", ylab = "northing"))
       #plot particles, with opacity indicating mass
       mob[[tPt - 1L]][L == lay, points(x, y, col = rgb(.63, .13, .94, m[L == lay]/maxm), pch = 16L)]
-      if(!is.null(rel[[tpt - 1L]]))
+      if(!is.null(rel[[tPt - 1L]]))
         rel[[tPt - 1L]][L == lay, points(x, y, col = rgb(.63, .13, .94, m[L == lay]/maxm), pch = 16L)]
       
       #add title and indication of mass magnitude
