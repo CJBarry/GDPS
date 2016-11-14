@@ -21,7 +21,8 @@ source("//COLLES-11893/Users/cjb309/Documents/GitHub/GDPS/src/GDPSfun2.R")
 
 od <- getwd(); setwd(mfdir)
 dis <- read.DIS(paste0(mfrt, ".dis"))
-if(plot.on.go || write.dat) bas <- read.BAS(paste0(mfrt, ".bas"), dis)
+if(plot.on.go || write.dat || !file.exists(paste0(dmrt, ".dat")))
+  bas <- read.BAS(paste0(mfrt, ".bas"), dis)
 if(!exists("sorb")) sorb <- FALSE
 
 #reorganise groundwater data if not done so (similar idea to CBF and FTL files for MODPATH and MT3D respectively)
@@ -257,7 +258,8 @@ dattxt <- function(por, MXP = 1000L, dis = paste0(mfrt, ".dis"), bas = paste0(mf
   
   txt <- character(7L)
   
-  txt[1] <- paste0(FFf(2^35, 16, 0), FFe(999, 16, 6, 3), FFe(10^30, 16, 6, 3), "  ", as.integer(MXP), "  1  1")
+  txt[1] <- paste0(FFf(2^35, 16L, 0L), FFe(999, 16L, 6L, 3L),
+                   FFe(10^30, 16L, 6L, 3L), "  ", as.integer(MXP), "  1  1")
   txt[3] <- paste(dis$LAYCBD, collapse = " ")
   txt[4] <- paste(if(is.vector(ib <- bas$IBOUND)) vapply(ib, function(val) RIARRAY(CNSTNT = val, FMTIN_type = "i", FMTIN_w = 3L, flag.no = 10L), character(1)) else
     if(length(dim(ib)) == 2L) RIARRAY(arr = ib, FMTIN_type = "i", FMTIN_w = 3L, flag.no = 10L) else{
@@ -279,13 +281,15 @@ dattxt <- function(por, MXP = 1000L, dis = paste0(mfrt, ".dis"), bas = paste0(mf
   txt[6] <- " 0.0"
   
   #starting and ending timesteps to process - it may be that using only the necessary timesteps will give a good saving in MODPATH run time; if you wish to develop this, then a new DAT file will be required for each DMOC step
-  txt[7] <- paste(c("", "1", "1", dis$extent["NPER"], dis$sps[dis$extent["NPER"], "NSTP"]), collapse = "  ")
+  txt[7] <- paste(c("", "1", "1", dis$extent["NPER"],
+                    dis$sps[dis$extent["NPER"], "NSTP"]), collapse = "  ")
   
   return(paste(txt, collapse = "\n"))
 }
 
 MXP.def <- 50000L
-if(write.dat || !file.exists(paste0(dmrt, ".dat"))) write(dattxt(phi_e, MXP.def, dis), paste0(dmrt, ".dat"))
+if(write.dat || !file.exists(paste0(dmrt, ".dat")))
+  write(dattxt(phi_e, MXP.def, dis), paste0(dmrt, ".dat"))
 
 
 
@@ -316,7 +320,10 @@ if(sorb) immob <- vector("list", nts)
 rel <- vector("list", nts)
 
 # initialise lost mass vector and degraded mass vector
-degraded <- massloss <- double(length(tvals))
+degraded <- double(nts)
+massloss <- structure(replicate(6L, double(nts), FALSE),
+                      names = c("bottom", "left", "top",
+                                "right", "other", "inactive"))
 
 # steady state simulations do not need a cbf file
 newcbf <- ifelse(tr, newcbf, FALSE)
@@ -473,7 +480,26 @@ for(tPt in 2:nts){
   inmodxy <- point.in.polygon(mob[[tPt]]$x, mob[[tPt]]$y, bbox.poly[, "x"], bbox.poly[, "y"]) == 1L
   inmodz <- mob[[tPt]]$L >= 1L & mob[[tPt]]$L <= dis$extent["NLAY"] & !is.na(mob[[tPt]]$L)
   if(any(!(inmod <- inmodxy & inmodz))){
-    massloss[tPt] <- sum(mob[[tPt]]$m[!inmod])
+    # the following algorithm determines which dimension (2D) the mass has escaped out of
+    outmod <- mob[[tPt]][!inmod]
+    outmod[, c("bottom", "left", "top", "right", "other") := {
+      modmid <- colMeans(bbox.poly)
+      yovx <- MFdy/MFdx
+      yintp <- modmid[2L] - yovx*modmid[1L]
+      yintn <- modmid[2L] + yovx*modmid[1L]
+      list(y <= MFxy0[2L] & y <= yintp + yovx*x & y < yintn - yovx*x,
+           x <= MFxy0[1L] & y > yintp + yovx*x & y <= yintn - yovx*x,
+           y >= MFxy0[2L] + MFdy & y >= yintp + yovx*x & y > yintn - yovx*x,
+           x >= MFxy0[1L] + MFdx & y > yintp + yovx*x & y <= yintn - yovx*x,
+           is.na(x) | is.na(y))
+    }]
+    outmod[, {
+      massloss[["bottom"]][tPt] <<- sum(m[bottom], na.rm = TRUE)
+      massloss[["left"]][tPt] <<- sum(m[left], na.rm = TRUE)
+      massloss[["top"]][tPt] <<- sum(m[top], na.rm = TRUE)
+      massloss[["right"]][tPt] <<- sum(m[right], na.rm = TRUE)
+      massloss[["other"]][tPt] <<- sum(m[other])
+    }]
     mob[[tPt]] <- mob[[tPt]][inmod,]
   }
   
@@ -537,6 +563,8 @@ setkey(rel, ts)
 fluxout <- rbindlist(fluxout[sapply(fluxout, is.data.table)], use.names = TRUE)
 setcolorder(fluxout, c("ts", "C", "R", "L", "J_out"))
 setkey(fluxout, ts)
+
+massloss <- do.call(cbind, massloss)
 
 #determine z values
 cat("z calculation...\n")
@@ -604,6 +632,7 @@ if(save.res) list.save(list(plume = mob,
                             time = tvals,
                             D = list("3Ddisp" = ThreeDD,
                                      "D" = c(DL = DL, DT = DT, DV = if(ThreeDD) DV),
+                                     "vdepD" = vdepD,
                                      "retain vertical loss" = if(ThreeDD) retain.vloss else NA),
                             react = mget(c("sorb", "Rf", "lambda", "decaysorbed")),
                             porosity = phi_e,

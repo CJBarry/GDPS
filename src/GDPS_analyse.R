@@ -6,9 +6,12 @@ library("plyr")
 #plots colour-flooded kernel-smoothed plume with optional particle overlay
 #also plots the model boundaries using the bas file and the active wells at the time represented by the plot
 #the plots are saved as png files
-plot.plume <- function(res, gwdata, bas, folder, prefix, p = TRUE, sc = TRUE, tss = NULL,
+plot.plume <- function(res, gwdata, bas, folder, prefix, p = TRUE, sc = TRUE, tss = NULL, to.png = TRUE,
                        width = 7.5, height = 6, unit = "in", resolution = 144, mai = c(1, 1, .5, .5),
-                       pcol = "#00000020", plot.pars = list(), ...){
+                       pcol = "#00000020", plot.pars = list(), breaks = 10^seq(-6, 0, .5),
+                       time.to.date = TRUE, all.tss = FALSE, ...){
+  if(is.null(tss) && !to.png && !all.tss) stop("really plot all time steps in R graphics device?\n",
+                                               "use all.tss = TRUE if so")
   if(is.null(tss)) tss <- seq_along(res$time)
   
   with(as.list(res$MFbounds$origin), {
@@ -16,16 +19,21 @@ plot.plume <- function(res, gwdata, bas, folder, prefix, p = TRUE, sc = TRUE, ts
   })
   
   l_ply(tss, function(tpt){
-    png(paste0(folder, prefix, "_", gsub(" ", "0", FFI(tpt, 3L)), if(p) "p", ".png"),
-        width, height, unit, res = resolution, ...)
-    on.exit(dev.off())
-    par(mai = mai)
+    if(to.png){
+      png(paste0(folder, prefix, "_", gsub(" ", "0", FFI(tpt, 3L)), if(p) "p", ".png"),
+          width, height, unit, res = resolution, ...)
+      on.exit(dev.off())
+      par(mai = mai)
+    }
     
+    ThreeDK <- length(res$KSplume$info$eval.points) == 3L
     with(res$KSplume, do.call(image, c(list(info$eval.points[[1L]], info$eval.points[[2L]],
-                                            rowMeans(k[,,, tpt], dims = 2L),
-                                            col = colfl(12L), breaks = 10^seq(-8, -2, .5),
+                                            if(ThreeDK) rowMeans(k[,,, tpt], dims = 2L) else k[,, tpt],
+                                            col = colfl(12L), breaks = breaks,
                                             xlab = "easting", ylab = "northing", asp = 1,
-                                            main = paste("year", floor(res$time[tpt]/365.25 + 1900))),
+                                            main = if(time.to.date){
+                                              paste("year", floor(res$time[tpt]/365.25 + 1900))
+                                            }else paste("time =", signif(res$time[tpt], 3L))),
                                        plot.pars)))
     
     with(gwdata, MFimage(bas$IBOUND[,, 1], gccs + MFx0, grcs + MFy0, c(-1, 1),
@@ -33,12 +41,13 @@ plot.plume <- function(res, gwdata, bas, folder, prefix, p = TRUE, sc = TRUE, ts
     
     mfts <- cellref.loc(res$time[tpt], c(0, gwdata$time) + MFt0)
     
-    with(gwdata, MFimage(rowSums(data[,,, mfts, "Wells"], dims = 2L) != 0,
-                         gccs + MFx0, grcs + MFy0, 0:1, c("transparent", "darkred"), add = TRUE))
+    if("Wells" %in% dimnames(gwdata$data)[[5L]])
+      with(gwdata, MFimage(rowSums(data[,,, mfts, "Wells"], dims = 2L) != 0,
+                           gccs + MFx0, grcs + MFy0, 0:1, c("transparent", "darkred"), add = TRUE))
     
     if(p) res$plume[ts == tpt, points(x, y, pch = 16L, cex = .4, col = pcol)]
     
-    if(sc) points(unique(res$release.loc[, c("x", "y")], MARGIN = 1L), col = "purple", cex = 1.5, lwd = 2)
+    if(sc) points(unique(res$release.loc[, 1:2], MARGIN = 1L), col = "purple", cex = 1.5, lwd = 2)
   })
 }
 
@@ -169,11 +178,11 @@ plot.abstracted <- function(res, gwdata, obsC, year.range = NULL, lcol = "red",
 }
 
 # plot the mass balance through time
-plot.mass.balance <- function(res, time.to.date = TRUE){
+plot.mass.balance <- function(res, time.to.date = TRUE, main = ""){
   # input from sources
   in.sc <- with(res, {
     mtmp <- double(length(time))
-    release[, mtmp[ts] <<- sum(m), by = ts]
+    release[, mtmp[ts + 1L] <<- sum(m), by = ts]
     cumsum(mtmp)
   })
   
@@ -193,14 +202,15 @@ plot.mass.balance <- function(res, time.to.date = TRUE){
   })
   
   # active mass, immobile
-  act.i <- with(res, {
+  act.i <- with(res, if(res$react$sorb){
     mtmp <- double(length(time))
     if("sorbed" %in% ls()) sorbed[, mtmp[ts] <<- sum(m), by = ts]
     mtmp
-  })
+  }else double(length(time)))
   
   # mass lost from model
-  out.lost <- cumsum(res$lostmass)
+  # - backward compatible for single vector
+  out.lost <- cumsum(rowSums(as.matrix(res$lostmass)))
   
   # degraded mass
   out.dec <- cumsum(res$degradedmass)
@@ -208,7 +218,10 @@ plot.mass.balance <- function(res, time.to.date = TRUE){
   plmx <- max(in.sc, act.pl, act.i, out.abs, out.lost, out.dec)
   date <- if(time.to.date) res$time/365.25 + 1900 else res$time
   
-  plot(date, in.sc, type = "l", col = "red", ylim = c(0, 2500), ylab = "mass (kg)")
+  ylm <- c(0, max(in.sc, act.pl, act.i, out.abs, out.lost, out.dec, na.rm = TRUE))
+  
+  plot(date, in.sc, type = "l", col = "red", ylim = ylm,
+       xlab = if(time.to.date) "date" else "time", ylab = "mass (kg)", main = main)
   lines(date, act.pl)
   lines(date, act.i, lty = 2)
   lines(date, out.abs, col = "green")
