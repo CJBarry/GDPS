@@ -163,10 +163,6 @@ if(lRAM2 && (reload.gwdata || !exists("gwdata") || !exists("wtop"))){
   }); wtop[is.na(wtop)] <- 999 #can't be having NA values here
 }
 
-#a rectangle representing the model bound
-MFdx <- diff(range(gwdata$gccs)); MFdy <- diff(range(gwdata$grcs))
-bbox.poly <- cbind(x = c(0, MFdx, MFdx, 0) + MFxy0[1L], y = c(0, 0, MFdy, MFdy) + MFxy0[2L])
-
 #find HDRY
 if(file.exists(paste0(mfdir, mfrt, ".lpf"))){
   HDRY <- scan(paste0(mfdir, mfrt, ".lpf"), list(integer(), double(), integer()), 1L, comment.char = "#")[[2L]]
@@ -343,7 +339,7 @@ relstate0 <- data.table(x = xy0[, 1L], y = xy0[, 2L], L = as.integer(L), zo = zo
 
 #plot wells on go? not an option with lRAM = TRUE
 if(plot.on.go && !lRAM) pw <- "Wells" %in% dimnames(gwdata$data)[[5]] else pw <- FALSE
-if(plot.on.go && lRAM2){
+if(lRAM2){
   truegw <- list(gccs = {
     csp <- dis$DELR
     if(identical(names(csp), "CNSTNT")) csp <- unname(rep(csp, dis$extent["NCOL"]))
@@ -354,6 +350,14 @@ if(plot.on.go && lRAM2){
     cumsum(c(0, rsp))
   })
 }
+
+#a rectangle representing the model bound
+if(!lRAM2){
+  MFdx <- diff(range(gwdata$gccs)); MFdy <- diff(range(gwdata$grcs))
+}else{
+  MFdx <- diff(range(truegw$gccs)); MFdy <- diff(range(truegw$grcs))
+}
+bbox.poly <- cbind(x = c(0, MFdx, MFdx, 0) + MFxy0[1L], y = c(0, 0, MFdy, MFdy) + MFxy0[2L])
 
 for(tPt in 2:nts){
   st.time <- Sys.time()

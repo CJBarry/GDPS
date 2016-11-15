@@ -106,23 +106,41 @@ coalesce3Dm <- function(xyzm, cdh, cdv = cdh/10, mm = 0, subregions = TRUE, TwoD
   
   cl.time <- Sys.time()
 
-  #aggregate with data table by group label
-  #don't bother if no coalescing actually requested
+  # aggregate with data table by group label
+  # don't bother if no coalescing actually requested
   if(cdh > 0){
     xyzm <- if(TwoD){
-      xyzm[, if(identical(.N, 1L)){
-        list(x = x, y = y, m = m)
+      if(subregions){
+        xyzm[, if(identical(.N, 1L)){
+          list(x = x, y = y, m = m)
+        }else{
+          xy <- llply(list(x = x, y = y), weighted.mean, m)
+          c(xy, list(m = sum(m)))
+        }, by = list(group, sr)]
       }else{
-        xy <- llply(list(x = x, y = y), weighted.mean, m)
-        c(xy, list(m = sum(m)))
-      }, by = group]
+        xyzm[, if(identical(.N, 1L)){
+          list(x = x, y = y, m = m)
+        }else{
+          xy <- llply(list(x = x, y = y), weighted.mean, m)
+          c(xy, list(m = sum(m)))
+        }, by = group]
+      }
     }else{
-      xyzm[, if(identical(.N, 1L)){
-        list(x = x, y = y, z = z, m = m)
+      if(subregions){
+        xyzm[, if(identical(.N, 1L)){
+          list(x = x, y = y, z = z, m = m)
+        }else{
+          xyz <- llply(list(x = x, y = y, z = z), weighted.mean, m)
+          c(xyz, list(m = sum(m)))
+        }, by = list(group, sr)]
       }else{
-        xyz <- llply(list(x = x, y = y, z = z), weighted.mean, m)
-        c(xyz, list(m = sum(m)))
-      }, by = c("group", if(subregions) "sr")]
+        xyzm[, if(identical(.N, 1L)){
+          list(x = x, y = y, z = z, m = m)
+        }else{
+          xyz <- llply(list(x = x, y = y, z = z), weighted.mean, m)
+          c(xyz, list(m = sum(m)))
+        }, by = group]
+      }
     }
   }
   
@@ -201,19 +219,37 @@ coalesce3Dm <- function(xyzm, cdh, cdv = cdh/10, mm = 0, subregions = TRUE, TwoD
     
     #coalesce groups due to smallness
     xyzm <- if(TwoD){
-      xyzm[, if(identical(.N, 1L)){
-        list(x = x, y = y, m = m)
+      if(subregion){
+        xyzm[, if(identical(.N, 1L)){
+          list(x = x, y = y, m = m)
+        }else{
+          xy <- llply(list(x = x, y = y), weighted.mean, m)
+          c(xy, list(m = sum(m)))
+        }, by = list(group, sr)]
       }else{
-        xy <- llply(list(x = x, y = y), weighted.mean, m)
-        c(xy, list(m = sum(m)))
-      }, by = group]
+        xyzm[, if(identical(.N, 1L)){
+          list(x = x, y = y, m = m)
+        }else{
+          xy <- llply(list(x = x, y = y), weighted.mean, m)
+          c(xy, list(m = sum(m)))
+        }, by = group]
+      }
     }else{
-      xyzm[, if(identical(.N, 1L)){
-        list(x = x, y = y, z = z, m = m)
+      if(subregions){
+        xyzm[, if(identical(.N, 1L)){
+          list(x = x, y = y, z = z, m = m)
+        }else{
+          xyz <- llply(list(x = x, y = y, z = z), weighted.mean, m)
+          c(xyz, list(m = sum(m)))
+        }, by = list(group, sr)]
       }else{
-        xyz <- llply(list(x = x, y = y, z = z), weighted.mean, m)
-        c(xyz, list(m = sum(m)))
-      }, by = c("group", if(subregions) "sr")]
+        xyzm[, if(identical(.N, 1L)){
+          list(x = x, y = y, z = z, m = m)
+        }else{
+          xyz <- llply(list(x = x, y = y, z = z), weighted.mean, m)
+          c(xyz, list(m = sum(m)))
+        }, by = group]
+      }
     }
 
     #small particles are now moved to new homes, so to speak, so can delete their original entries
