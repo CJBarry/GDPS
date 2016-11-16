@@ -9,7 +9,7 @@ library("rlist")
 library("stringr")
 library("abind")
 library("data.table")
-# library("ks")
+library("ks")
 library("sp")
 source(paste0(gendir, "MFread.R"))
 source(paste0(gendir, "MT3D.R")) #for the array writing function RIARRAY
@@ -272,8 +272,9 @@ if(write.dat || !file.exists(paste0(dmrt, ".dat")))
 # simulation --------------------------------------------------------------
 
 #time steps: ensured that they do not extend beyond the time period of the MODFLOW model
-tvals <- seq(ifelse(start.t >= MFt0, start.t, MFt0),
-             ifelse(end.t < tail(gwdata$time, 1L) + MFt0, end.t, tail(gwdata$time, 1L) + MFt0), Delta.t)
+if(start.t < MFt0) start.t <- MFt0
+if(end.t > last(gwdata$time) + MFt0) end.t <- last(gwdata$time) + MFt0
+tvals <- seq(start.t, end.t, Delta.t)
 
 # ensure get to end even if duration is not multiple of Delta.t
 if(last(tvals) != end.t) tvals <- c(tvals, end.t)
