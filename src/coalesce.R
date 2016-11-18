@@ -109,38 +109,21 @@ coalesce3Dm <- function(xyzm, cdh, cdv = cdh/10, mm = 0, subregions = TRUE, TwoD
   # aggregate with data table by group label
   # don't bother if no coalescing actually requested
   if(cdh > 0){
+    bys <- if(subregions) "group,sr" else "group"
     xyzm <- if(TwoD){
-      if(subregions){
-        xyzm[, if(identical(.N, 1L)){
-          list(x = x, y = y, m = m)
-        }else{
-          xy <- llply(list(x = x, y = y), weighted.mean, m)
-          c(xy, list(m = sum(m)))
-        }, by = list(group, sr)]
+      xyzm[, if(identical(.N, 1L)){
+        list(x = x, y = y, m = m)
       }else{
-        xyzm[, if(identical(.N, 1L)){
-          list(x = x, y = y, m = m)
-        }else{
-          xy <- llply(list(x = x, y = y), weighted.mean, m)
-          c(xy, list(m = sum(m)))
-        }, by = group]
-      }
+        xy <- llply(list(x = x, y = y), weighted.mean, m)
+        c(xy, list(m = sum(m)))
+      }, by = bys]
     }else{
-      if(subregions){
-        xyzm[, if(identical(.N, 1L)){
-          list(x = x, y = y, z = z, m = m)
-        }else{
-          xyz <- llply(list(x = x, y = y, z = z), weighted.mean, m)
-          c(xyz, list(m = sum(m)))
-        }, by = list(group, sr)]
+      xyzm[, if(identical(.N, 1L)){
+        list(x = x, y = y, z = z, m = m)
       }else{
-        xyzm[, if(identical(.N, 1L)){
-          list(x = x, y = y, z = z, m = m)
-        }else{
-          xyz <- llply(list(x = x, y = y, z = z), weighted.mean, m)
-          c(xyz, list(m = sum(m)))
-        }, by = group]
-      }
+        xyz <- llply(list(x = x, y = y, z = z), weighted.mean, m)
+        c(xyz, list(m = sum(m)))
+      }, by = bys]
     }
   }
   
@@ -187,6 +170,7 @@ coalesce3Dm <- function(xyzm, cdh, cdv = cdh/10, mm = 0, subregions = TRUE, TwoD
     xyzm[, small := sm]; rm(sm)
     
     #make groups to coalesce each small particle with one or more others
+    bys <- if(subregions) "sr"
     xyzm[, group := {
       if(all(small)){
         #this step avoids infinite loops - see above
@@ -215,41 +199,24 @@ coalesce3Dm <- function(xyzm, cdh, cdv = cdh/10, mm = 0, subregions = TRUE, TwoD
         
         grvec
       }
-    }, by = if(subregions) sr]
+    }, by = bys]
     
     #coalesce groups due to smallness
+    bys <- if(subregion) "group,sr" else "group"
     xyzm <- if(TwoD){
-      if(subregion){
-        xyzm[, if(identical(.N, 1L)){
-          list(x = x, y = y, m = m)
-        }else{
-          xy <- llply(list(x = x, y = y), weighted.mean, m)
-          c(xy, list(m = sum(m)))
-        }, by = list(group, sr)]
+      xyzm[, if(identical(.N, 1L)){
+        list(x = x, y = y, m = m)
       }else{
-        xyzm[, if(identical(.N, 1L)){
-          list(x = x, y = y, m = m)
-        }else{
-          xy <- llply(list(x = x, y = y), weighted.mean, m)
-          c(xy, list(m = sum(m)))
-        }, by = group]
-      }
+        xy <- llply(list(x = x, y = y), weighted.mean, m)
+        c(xy, list(m = sum(m)))
+      }, by = bys]
     }else{
-      if(subregions){
-        xyzm[, if(identical(.N, 1L)){
-          list(x = x, y = y, z = z, m = m)
-        }else{
-          xyz <- llply(list(x = x, y = y, z = z), weighted.mean, m)
-          c(xyz, list(m = sum(m)))
-        }, by = list(group, sr)]
+      xyzm[, if(identical(.N, 1L)){
+        list(x = x, y = y, z = z, m = m)
       }else{
-        xyzm[, if(identical(.N, 1L)){
-          list(x = x, y = y, z = z, m = m)
-        }else{
-          xyz <- llply(list(x = x, y = y, z = z), weighted.mean, m)
-          c(xyz, list(m = sum(m)))
-        }, by = group]
-      }
+        xyz <- llply(list(x = x, y = y, z = z), weighted.mean, m)
+        c(xyz, list(m = sum(m)))
+      }, by = bys]
     }
 
     #small particles are now moved to new homes, so to speak, so can delete their original entries
