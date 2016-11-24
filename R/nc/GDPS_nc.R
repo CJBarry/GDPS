@@ -17,8 +17,8 @@ source(paste0(gendir, "MT3D.R")) #for the array writing function RIARRAY
 source(paste0(gendir, "MODPATHmass.R"))
 
 #functions for propagate and coalesce stages
-source("C:/Users/CJB/GitHub/GDPS/src/coalesce.R")
-source("C:/Users/CJB/GitHub/GDPS/src/GDPSfun2.R")
+source("C:/Users/cjb309/Documents/GitHub/coalesce/R/coalesce.R")
+source("C:/Users/cjb309/Documents/GitHub/GDPS/R/nc/GDPSfun2_nc.R")
 
 od <- getwd(); setwd(mfdir)
 dis <- read.DIS(paste0(mfrt, ".dis"))
@@ -30,17 +30,17 @@ if(!exists("sorb")) sorb <- FALSE
 # utilities ---------------------------------------------------------------
 
 # a method for using index matrices with NetCDFs without needing to read a
-# whole array
+#  whole array
 nc.imtx <- function(ncfile, variable, imtx){
-  ndims <- var.inq.nc(ncfile, variable)$ndims
+  ndims <- as.integer(var.inq.nc(ncfile, variable)$ndims)
   stopifnot(identical(ndims, ncol(imtx)))
   
   rgs <- apply(imtx, 2L, range)
   
-  ar <- var.get.nc(ncfile, variable, rgs[1L,], apply(rgs, 2L, diff),
+  ar <- var.get.nc(ncfile, variable, rgs[1L,], apply(rgs, 2L, diff) + 1L,
                    collapse = FALSE)
   
-  imtx_mod <- sapply(1:ndims, function(d) imtx[, d] - rgs[1L, d])
+  imtx_mod <- sapply(1:ndims, function(d) imtx[, d] - rgs[1L, d] + 1L)
   
   ar[imtx_mod]
 }
@@ -59,12 +59,13 @@ if(length(rel.fun) != nrow(xy0)) stop("The number of release functions in rel.fu
 # load groundwater data ---------------------------------------------------
 
 ## check that gwnc isn't already connected to a NetCDF
-if(exists(gwdata) &&
+if(exists("gwdata") &&
    !identical(class(try(file.inq.nc(gwdata))), "try-error")){
   close.nc(gwdata)
 }
 
 ## groundwater data as NetCDF
+gwnc <- paste0(mfdir, mfrt, ".nc")
 if(file.exists(gwnc) && !fresh.mfdata){
   gwdata <- open.nc(gwnc)
 }else{
@@ -77,15 +78,13 @@ if(file.exists(gwnc) && !fresh.mfdata){
 ## find co-ordinate origins and start time
 MFxy0 <- c(x = att.get.nc(gwdata, "NC_GLOBAL", "origin-x"),
            y = att.get.nc(gwdata, "NC_GLOBAL", "origin-y"))
-MFt0 <- att.get.nc(gwdata, "NC_GLOBAL", start_time)
+MFt0 <- att.get.nc(gwdata, "NC_GLOBAL", "start_time")
 
 # get water top, write to new NetCDF if necessary
 if(file.exists("wtop.nc")){
   wtop <- open.nc("wtop.nc")
-  on.exit(close.nc(wtop), add = TRUE)
 }else if(is.character(wtop)){
   wtop <- create.nc("wtop.nc", large = TRUE)
-  on.exit(close.nc(wtop), add = TRUE)
   att.put.nc(wtop, "NC_GLOBAL", "title", "NC_CHAR",
              "height of saturated groundwater above datum")
   att.put.nc(wtop, "NC_GLOBAL", "history", "NC_CHAR",
@@ -283,7 +282,7 @@ relstate0 <- data.table(x = xy0[, 1L], y = xy0[, 2L],
 
 ## plot wells on go? not an option with lRAM = TRUE
 pw <- if(plot.on.go){
-  "Wells" %in% var.get.nc(gwdata, "paramters")
+  "Wells" %in% var.get.nc(gwdata, "parameters")
 }else FALSE
 
 ## a rectangle representing the model bound

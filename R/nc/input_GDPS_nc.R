@@ -11,9 +11,9 @@
 # if you have changed the MODFLOW model or the chosen porosity, you must put write.dat <- TRUE
 
 #directories: R scripts and groundwater model working directories
-gendir <- "C:/Users/cjb309/Documents/GitHub/tools/"
+gendir <- "C:/Users/cjb309/Dropbox/Scripts/R/"
 mfdir <- "" #the directory in which the MODFLOW input and output files are stored
-mpexe <- "Mpathr5_0.exe" #full path and directory for the MODPATH version 5 executable
+mpexe <- "C:/Users/cjb309/Dropbox/Scripts/gw/Mpathr5_0.exe" #full path and directory for the MODPATH version 5 executable
 source(paste0(gendir, "td.R")) # do not change
 # use the td(day, month, year) function for a consistent date-based time system in which days are whole numbers
 # td(31, 12, 1899) = 1, so that it is consistent with the MS Excel date numbering system after 01/03/1900

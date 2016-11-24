@@ -217,7 +217,7 @@ prop <- function(state, t.new, Delta.t, newcbf, por, statei = NULL, Rf = 1, sorb
       c(rep(wtop[ct, rt, NLAY - nwet + 1L, mfts], NLAY - nwet + 1L),
         var.get.nc(gwdata, "elev", c(ct, rt, NLAY - nwet + 1L),
                    c(1L, 1L, nwet)))
-    }, ct, rt)
+    }, C, R)
     Lnew <- apply(ddivs, 2L, function(dd) cellref.loc(z, rev(dd), TRUE))
     
     zonew <- punif(z, dd[cbind(Lnew, 1:2)], dd[cbind(Lnew + 1L, 1:2)])
@@ -345,7 +345,7 @@ coalesce <- function(state, cd, mm = 0, t){
   # row numbers
   R <- cellref.loc(state$y, grcs + MFxy0[2L], T)
   # timestep number; need t0 here?
-  mfts <- cellref.loc(t, c(0, time) + MFt0, F)
+  mfts <- cellref.loc(t, c(0, gwtime) + MFt0, F)
   lthk <- state[, {
     imtop <- cbind(C, R, L, mfts); imbot <- cbind(C, R, L + 1L)
     nc.imtx(wtop, "wtop", imtop) - nc.imtx(gwdata, "elev", imbot)
