@@ -107,11 +107,14 @@ prop <- function(state, t.new, Delta.t, newcbf, por, statei = NULL, Rf = 1, sorb
   
   # get end points of pathlines as new positions
   # rows are duplicated for the dispersion step
-  xyzm <- xyzm[, llply(llply(.SD, last), rep, each = 2L*Ndisppairs),
+  # lapply(.SD, `[`, .N) is a microbenchmarked method:
+  # - lapply beats llply (and now retains names, importantly)
+  # - (.SD, `[`, .N) beats (.SD, last) and (.SD, tail, 1L)
+  xyzm <- xyzm[, lapply(lapply(.SD, `[`, .N), rep, each = 2L*Ndisppairs),
                by = ptlno, .SDcols = c("x", "y", "z", "zo", "L", "t", "m")]
   
   if(all(xyzm$m == 0)){
-    xyzm <- xyzm[, llply(.SD, last),
+    xyzm <- xyzm[, lapply(.SD, `[`, .N),
                  by = ptlno, .SDcols = c("x", "y", "zo", "L", "m")]
     xyzm[, ptlno := NULL]
     setcolorder(xyzm, colord)

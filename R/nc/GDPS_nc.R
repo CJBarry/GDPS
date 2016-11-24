@@ -75,6 +75,12 @@ if(file.exists(gwnc) && !fresh.mfdata){
   gwdata <- open.nc(gwnc)
 }
 
+dtits <- c("NCOL", "NROW", "NLAY", "NTS")
+ds <- c(sapply(dtits, dim.inq.nc, ncfile = gwdata)["length",],
+        recursive = TRUE)
+spds <- ds[1:3]
+nmfts <- ds[4L]
+
 ## find co-ordinate origins and start time
 MFxy0 <- c(x = att.get.nc(gwdata, "NC_GLOBAL", "origin-x"),
            y = att.get.nc(gwdata, "NC_GLOBAL", "origin-y"))
@@ -83,7 +89,7 @@ MFt0 <- att.get.nc(gwdata, "NC_GLOBAL", "start_time")
 # get water top, write to new NetCDF if necessary
 if(file.exists("wtop.nc")){
   wtop <- open.nc("wtop.nc")
-}else if(is.character(wtop)){
+}else{
   wtop <- create.nc("wtop.nc", large = TRUE)
   att.put.nc(wtop, "NC_GLOBAL", "title", "NC_CHAR",
              "height of saturated groundwater above datum")
@@ -94,10 +100,11 @@ if(file.exists("wtop.nc")){
       MoreArgs = list(ncfile = wtop))
   
   var.def.nc(wtop, "wtop", "NC_FLOAT", dtits)
+  att.copy.nc(gwdata, "Head", "missing_value", wtop, "wtop")
   
   # lt is layer top
   lt <- c(var.get.nc(gwdata, "elev", count = spds))
-  for(i in 1:nts){
+  for(i in 1:nmfts){
     var.put.nc(wtop, "wtop", {
       # wt is water head
       wt <- c(var.get.nc(gwdata, "Head", c(1L, 1L, 1L, i), c(spds, 1L)))
@@ -556,30 +563,30 @@ ksDATA$Vkcell <- Vkcell
 
 sim.end <- Sys.time()
 
-if(save.res) cat("saving...\n")
-if(save.res) list.save(list(plume = mob,
-                            sorbed = if(sorb) immob,
-                            release = rel,
-                            KSplume = list(k = ksOUT, info = ksDATA, "smooth" = smd[if(ThreeDK) 1:2 else 1L],
-                                           "number of divisions" = nkcell, "kcell volume or area" = Vkcell),
-                            fluxout = fluxout,
-                            degradedmass = degraded,
-                            lostmass = massloss,
-                            time = tvals,
-                            D = list("3Ddisp" = ThreeDD,
-                                     "D" = c(DL = DL, DT = DT, DV = if(ThreeDD) DV),
-                                     "vdepD" = vdepD,
-                                     "retain vertical loss" = if(ThreeDD) retain.vloss else NA),
-                            react = mget(c("sorb", "Rf", "lambda", "decaysorbed")),
-                            porosity = phi_e,
-                            release.loc = data.frame(xy0, L = L, zo = zo),
-                            release.rates = rel.fun,
-                            MFbounds = list(origin = c(MFxy0, t = MFt0),
-                                            bounds = bbox.poly),
-                            coalesce = mget(c("cd", "mm", "maxp")),
-                            description = description,
-                            timings = c(start = sim.start, end = sim.end)),
-                       file = paste0(dmrt, "_", info, ".rds"))
+cat("saving...\n")
+list.save(list(plume = mob,
+               sorbed = if(sorb) immob,
+               release = rel,
+               KSplume = list(k = ksOUT, info = ksDATA, "smooth" = smd[if(ThreeDK) 1:2 else 1L],
+                              "number of divisions" = nkcell, "kcell volume or area" = Vkcell),
+               fluxout = fluxout,
+               degradedmass = degraded,
+               lostmass = massloss,
+               time = tvals,
+               D = list("3Ddisp" = ThreeDD,
+                        "D" = c(DL = DL, DT = DT, DV = if(ThreeDD) DV),
+                        "vdepD" = vdepD,
+                        "retain vertical loss" = if(ThreeDD) retain.vloss else NA),
+               react = mget(c("sorb", "Rf", "lambda", "decaysorbed")),
+               porosity = phi_e,
+               release.loc = data.frame(xy0, L = L, zo = zo),
+               release.rates = rel.fun,
+               MFbounds = list(origin = c(MFxy0, t = MFt0),
+                               bounds = bbox.poly),
+               coalesce = mget(c("cd", "mm", "maxp")),
+               description = description,
+               timings = c(start = sim.start, end = sim.end)),
+          file = paste0(dmrt, "_", info, ".rds"))
 
 setwd(od)
 cat("Execution complete.  Results saved to\n", mfdir, dmrt, "_", info, ".rds\n", sep = "")
