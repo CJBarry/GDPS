@@ -70,7 +70,7 @@ which.nc <- function(ncfile, variable, FUN = Negate(is.na), ..., arr.ind = FALSE
 plot.plume <- function(res, gwdata, bas, folder, prefix, p = TRUE, sc = TRUE, tss = NULL, to.png = TRUE,
                        width = 7.5, height = 6, unit = "in", resolution = 144, mai = c(1, 1, .5, .5),
                        pcol = "#00000020", plot.pars = list(), breaks = 10^seq(-6, 0, .5),
-                       time.to.date = TRUE, all.tss = FALSE, ...){
+                       time.to.date = TRUE, all.tss = FALSE, baslay = 1L, ...){
   if(is.null(tss) && !to.png && !all.tss) stop("really plot all time steps in R graphics device?\n",
                                                "use all.tss = TRUE if so")
   if(is.null(tss)) tss <- seq_along(res$time)
@@ -99,15 +99,16 @@ plot.plume <- function(res, gwdata, bas, folder, prefix, p = TRUE, sc = TRUE, ts
     
     gccs <- var.get.nc(gwdata, "gccs")
     grcs <- var.get.nc(gwdata, "grcs")
-    MFimage(bas$IBOUND[,, 1], gccs + MFx0, grcs + MFy0, c(-1, 1),
+    MFimage(bas$IBOUND[,, baslay], gccs + MFx0, grcs + MFy0, c(-1, 1),
             c("blue", "grey", "transparent"), add = TRUE)
   
     mfts <- cellref.loc(res$time[tpt],
                         c(0, var.get.nc(gwdata, "time")) + MFt0)
     
     if("Wells" %chin% var.get.nc(gwdata, "parameters")){
-      MFimage(var.get.nc(gwdata, "Wells",
-                         c(1, 1, 1, mfts), c(NA, NA, NA, 1)),
+      MFimage(rowSums(var.get.nc(gwdata, "Wells",
+                         c(1, 1, 1, mfts), c(NA, NA, NA, 1),
+                         collapse = FALSE), dims = 2L),
               gccs, grcs, 0:1, c("transparent", "darkred"), add = TRUE)
     }
     

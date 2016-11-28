@@ -99,6 +99,8 @@ prop <- function(state, t.new, Delta.t, newcbf, por, statei = NULL, Rf = 1, sorb
   v <- if(vdepD){
     xyzm[, sum(sqrt(diff(x)^2 + diff(y)^2))/diff(range(t)), by = ptlno]$V1
   }else 1
+  # for particles that are captured instantly:
+  v[!is.finite(v)] <- 0
   
   ## average direction of travel of each particle --
   # atan2(0, 0) = 0, in case of instant capture - OK
@@ -214,7 +216,8 @@ prop <- function(state, t.new, Delta.t, newcbf, por, statei = NULL, Rf = 1, sorb
     # the length of ddivs will always be NLAY + 1
     # should ensure that a particle is never labelled with a layer that is dry at its location
     ddivs <- mapply(function(ct, rt){
-      c(rep(wtop[ct, rt, NLAY - nwet + 1L, mfts], NLAY - nwet + 1L),
+      c(rep(var.get.nc(wtop, "wtop", c(ct, rt, NLAY - nwet + 1L, mfts),
+                       rep(1L, 4L)), NLAY - nwet + 1L),
         var.get.nc(gwdata, "elev", c(ct, rt, NLAY - nwet + 1L),
                    c(1L, 1L, nwet)))
     }, C, R)
@@ -348,6 +351,9 @@ coalesce <- function(state, cd, mm = 0, t){
   mfts <- cellref.loc(t, c(0, gwtime) + MFt0, F)
   lthk <- state[, {
     imtop <- cbind(C, R, L, mfts); imbot <- cbind(C, R, L + 1L)
+    if(any(is.na(imtop)) || any(is.na(imbot))) cat({
+      "NA particles: coalescing will not work properly"
+    })
     nc.imtx(wtop, "wtop", imtop) - nc.imtx(gwdata, "elev", imbot)
   }]
   
