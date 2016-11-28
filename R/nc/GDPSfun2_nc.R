@@ -105,16 +105,13 @@ prop <- function(state, t.new, Delta.t, newcbf, por, statei = NULL, Rf = 1, sorb
   phi <- atan2(xyzm[, y[.N] - y[1L], by = ptlno]$V1,
                xyzm[, x[.N] - x[1L], by = ptlno]$V1)
   
-  # get end points of pathlines as new positions
+  # get end points of pathlines as new positions (.N is length of subset)
   # rows are duplicated for the dispersion step
-  # lapply(.SD, `[`, .N) is a microbenchmarked method:
-  # - lapply beats llply (and now retains names, importantly)
-  # - (.SD, `[`, .N) beats (.SD, last) and (.SD, tail, 1L)
-  xyzm <- xyzm[, lapply(lapply(.SD, `[`, .N), rep, each = 2L*Ndisppairs),
+  xyzm <- xyzm[, .SD[rep(.N, 2*Ndisppairs)],
                by = ptlno, .SDcols = c("x", "y", "z", "zo", "L", "t", "m")]
   
   if(all(xyzm$m == 0)){
-    xyzm <- xyzm[, lapply(.SD, `[`, .N),
+    xyzm <- xyzm[, .SD[.N],
                  by = ptlno, .SDcols = c("x", "y", "zo", "L", "m")]
     xyzm[, ptlno := NULL]
     setcolorder(xyzm, colord)
