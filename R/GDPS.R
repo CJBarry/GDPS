@@ -16,18 +16,11 @@ source(paste0(gendir, "MT3D.R")) #for the array writing function RIARRAY
 source(paste0(gendir, "MODPATHmass.R"))
 
 #functions for propagate and coalesce stages
-source("C:/Users/CJB/GitHub/GDPS/src/coalesce.R")
-source("C:/Users/CJB/GitHub/GDPS/src/GDPSfun2.R")
+source("C:/Users/cjb309/Documents/GitHub/coalesce/R/coalesce.R")
+source("C:/Users/cjb309/Documents/GitHub/GDPS/R/GDPSfun2.R")
 
 od <- getwd(); setwd(mfdir)
-dis <- read.DIS(paste0(mfrt, ".dis"))
-if(plot.on.go || write.dat || !file.exists(paste0(dmrt, ".dat")))
-  bas <- read.BAS(paste0(mfrt, ".bas"), dis)
 if(!exists("sorb")) sorb <- FALSE
-
-#reorganise groundwater data if not done so (similar idea to CBF and FTL files for MODPATH and MT3D respectively)
-if(!exists("lRAM")) lRAM <- FALSE
-if(!exists("lRAM2")) lRAM2 <- FALSE
 
 
 # perform checks before starting ------------------------------------------
@@ -42,141 +35,167 @@ if(length(rel.fun) != nrow(xy0)) stop("The number of release functions in rel.fu
 
 # load groundwater data ---------------------------------------------------
 
-if(!lRAM && !lRAM2 && (reload.gwdata || !exists("gwdata") || !exists("wtop"))){
-  gwdata <- if(file.exists(fnm <- paste0(mfrt, ".rds")) && !fresh.mfdata) list.load(fnm) else GWdata.save(mfdir, mfrt, fnm)
-  gwdata$data[,,,, -1L][is.na(gwdata$data[,,,, -1L])] <- 0 #MODPATHmass uses flows in adjacent cells, so there can't be NA values
-  
-  #transient water surface top - either cell top or Head (water table) at any point
-  wtop <- with(gwdata, {
-    lt <- structure(rep(c(elev[,, -dim(elev)[3]]), times = length(time)), dim = dim(data)[1:4])
-    wt <- adrop(data[,,,, "Head", drop = F], c(F, F, F, F, T))
-    ifelse(lt > wt, wt, lt)
-  }); wtop[is.na(wtop)] <- 999 #can't be having NA values here
-  
-  #save on memory - only keep what is needed
-  gwdata$data <- with(gwdata, data[,,,, dimnames(data)[[5]] %in% c("Head",
-                                                                   "FlowRightFace",
-                                                                   "FlowFrontFace",
-                                                                   "FlowLowerFace",
-                                                                   "Storage",
-                                                                   "Wells"), drop = F])
-}
+# new system to keep connection with data files and load in only what is
+#  needed for the current time step; different from previous lRAM because
+#  no need to start again in file each time
 
-# lRAM means there is limited RAM available, so the whole transient dataset cannot simply be loaded in.  Therefore only the necessary time steps for each GDPS time step are loaded
-if(lRAM){
-  # get the co-ordinate information
-  dis <- read.DIS(paste0(mfrt, ".dis"))
-  gwdata <- list(data = NULL,
-                 grcs = {
-                   rsp <- dis$DELC
-                   if(identical(names(rsp), "CNSTNT")) rsp <- rep(rsp, dis$extent["NROW"])
-                   cumsum(c(0, rsp))
-                 },
-                 gccs = {
-                   csp <- dis$DELR
-                   if(identical(names(csp), "CNSTNT")) csp <- rep(csp, dis$extent["NCOL"])
-                   cumsum(c(0, csp))
-                 },
-                 elev = dis$elev,
-                 time = readHDS.arr(paste0(mfrt, ".hds"), time.only = TRUE, show.help = FALSE))
-  mftime <- gwdata$time
-  sp_ts.ts <- t(sapply(str_split(names(mftime), "_"), identity))
-  mode(sp_ts.ts) <- "integer"
-  
-  # expression for loading the required timesteps each GDPS timestep
-  datatimeexpr <- expression({
-    hds <- readHDS.arr(paste0(mfrt, ".hds"), sp_ts = nects)
-    cbb <- readCBB.arr(paste0(mfrt, ".cbb"), sp_ts = nects)
-    ds <- dim(cbb) + c(rep(0L, 4L), 1L)
-    dnms <- c(dimnames(cbb)[1:4],
-              list(c("Head", dimnames(cbb)[[5L]])))
-    list(data = array(c(hds$Head, cbb), ds, dnms),
-         time = hds$time)
-  })
-  
-  wtopexpr <- expression(with(gwdata, {
-    wtop <- array(dim = dim(data)[1:4])
-    for(tdim in 1L:dim(data)[4L]){
-      wtab <- adrop(data[,,, tdim, "Head", drop = FALSE], c(F, F, F, T, T))
-      wtop[,,, tdim] <-
-        ifelse(wtab > elev[,, -dim(elev)[3L]],
-               wtab, elev[,, -dim(elev)[3L]])
-    }
-    wtop
-  }))
-}
+# set up connections
+hdcon <- file(paste0(mfrt, ".hds"), "rb")
+flcon <- file(paste0(mfrt, ".cbb"), "rb")
 
-if(lRAM2 && (reload.gwdata || !exists("gwdata") || !exists("wtop"))){
-  COLs <- Crange[1L]:Crange[2L]
-  ROWs <- Rrange[1L]:Rrange[2L]
-  
-  dis <- read.DIS(paste0(mfrt, ".dis"))
-  
-  lr2gwdexpr <- expression({
-    gwdata <- list(data = NULL,
-                   grcs = {
-                     rsp <- dis$DELC
-                     if(identical(names(rsp), "CNSTNT")) rsp <- unname(rep(rsp, dis$extent["NROW"]))
-                     cumsum(c(0, rsp))[dis$extent["NROW"] - rev(c(ROWs, last(ROWs) + 1L))]
-                   },
-                   gccs = {
-                     csp <- dis$DELR
-                     if(identical(names(csp), "CNSTNT")) csp <- unname(rep(csp, dis$extent["NCOL"]))
-                     cumsum(c(0, csp))[c(COLs, last(COLs) + 1L)]
-                   },
-                   elev = dis$elev[COLs, ROWs,, drop = FALSE],
-                   time = NULL)
+# get co-ordinate data
+gwdata <- list()
+if(reload.DIS || !exists("dis")) dis <- read.DIS(paste0(mfrt, ".dis"))
+if(reload.BAS || !exists("bas")) bas <- read.BAS(paste0(mfrt, ".bas"), dis)
+
+gwdata$gccs <- if(identical(length(dis$DELR), 1L)){
+  seq(0, by = dis$DELR, length.out = dis$extent["NCOL"] + 1L)
+}else cumsum(c(0, dis$DELR))
+gwdata$grcs <- if(identical(length(dis$DELC), 1L)){
+  seq(0, by = dis$DELC, length.out = dis$extent["NROW"] + 1L)
+}else cumsum(c(0, dis$DELC))
+gwdata$elev <- if(is.null(dim(dis$elev))){
+  sapply(dis$elev, array, dis$extent[c("NCOL", "NROW")],
+         simplify = "array")
+}else dis$elev
+
+gwtime <- with(dis$sps, {
+  data.frame(i = 1:sum(NSTP),
+             t = c(Map(function(Dt, N, m, t.end, sp){
+               dt1 <- Dt/sum(m^(0:(N - 1L)))
+               ts <- cumsum(dt1*m^(0:(N - 1L))) + t.end - Dt
+               names(ts) <- paste(sp, 1:N, sep = "_")
+               ts
+             }, PERLEN, NSTP, TSMULT, cumsum(PERLEN), 1:length(PERLEN)),
+             recursive = TRUE))
+})
+
+# function to read in new groundwater data for the timestep
+# does not require array to be passed in by value, so saving memory
+# this function assumes that all the MODFLOW output data is written in
+#  order of model time (i.e. the time steps are accessed sequentially)
+renew.gwdata <- function(curr.mfts, new.mfts, readFLF, readS){
+  # overlap; probable
+  if(any(new.mfts %in% curr.mfts)){
+    gwdata$data[,,, 1:sum(new.mfts %in% curr.mfts),] <<-
+      gwdata$data[,,, which(curr.mfts %in% new.mfts),]
     
-    hds <- readHDS.arr(paste0(mfrt, ".hds"), CRs = list(COLs, ROWs))
-    
-    # doesn't matter if not all of artys are actually found in the file
-    cbb <- readCBB.arr(paste0(mfrt, ".cbb"), hds = hds, CRLs = list(COLs, ROWs, "all"),
-                       artys = c("Storage", "FlowRightFace", "FlowFrontFace", "FlowLowerFace", "Wells"))
-    
-    gwdata$time <- hds$time
-    gwdata$data <- array(c(hds$Head, cbb), dim = dim(cbb) + c(0L, 0L, 0L, 0L, 1L),
-                         dimnames = c(dimnames(cbb)[1:4], list(c("Head", dimnames(cbb)[[5L]]))))
-    
-    rm(cbb, hds)
-    
-    gwdata
-  })
-  
-  if(fresh.mfdata || !file.exists(paste0(mfrt, lRAM2suff, ".rds"))){
-    gwdata <- eval(lr2gwdexpr)
-    list.save(gwdata, paste0(mfrt, lRAM2suff, ".rds"))
-  }else gwdata <- list.load(paste0(mfrt, lRAM2suff, ".rds"))
-  
-  #check that the correct columns and rows have been read - stored in dimnames
-  #if not, then re-read gwdata from model results and save as new list
-  # note that "2" == 2L returns TRUE
-  if(`||`(length(COLs) != dim(gwdata$data)[1L] || length(ROWs) != dim(gwdata$data)[2L],
-     any(COLs != dimnames(gwdata$data)[[1L]]) || any(ROWs != dimnames(gwdata$data)[[2L]]))){
-    gwdata <- eval(lr2gwdexpr)
-    list.save(gwdata, paste0(mfrt, lRAM2suff, ".rds"))
+    wtop[,,, 1:sum(new.mfts %in% curr.mfts)] <<-
+      wtop[,,, which(curr.mfts %in% new.mfts)]
   }
-
-  wtop <- with(gwdata, {
-    lt <- structure(rep(c(elev[,, -dim(elev)[3]]), times = length(time)), dim = dim(data)[1:4])
-    wt <- adrop(data[,,,, "Head", drop = F], c(F, F, F, F, T))
-    ifelse(lt > wt, wt, lt)
-  }); wtop[is.na(wtop)] <- 999 #can't be having NA values here
+  
+  # does array need expanding?
+  if(length(new.mfts) > dim(gwdata$data)[4L]){
+    # MODFLOW data array
+    tmp <- double(prod(dis$extent[c("NCOL", "NROW", "NLAY")])*
+                    length(new.mfts)*(3L + readFLF + readS))
+    dim(tmp) <- c(dis$extent[c("NCOL", "NROW", "NLAY")],
+                  length(new.mfts), (3L + readFLF + readS))
+    dimnames(tmp)[4:5] <- list(names(gwdata$time)[new.mfts],
+                               c("Head",
+                                 "FlowRightFace",
+                                 "FlowFrontFace",
+                                 if(readFLF) "FlowLowerFace",
+                                 if(readS) "Storage"))
+    tmp[,,, 1:sum(new.mfts %in% curr.mfts),] <-
+      gwdata$data[,,, 1:sum(new.mfts %in% curr.mfts),]
+    gwdata$data <<- tmp
+    rm(tmp)
+    
+    # water top
+    tmp <- double(prod(dis$extent[c("NCOL", "NROW", "NLAY")])*
+                    length(new.mfts))
+    dim(tmp) <- c(dis$extent[c("NCOL", "NROW", "NLAY")],
+                  length(new.mfts))
+    dimnames(tmp)[[4L]] <- names(gwdata$time)[new.mfts]
+    tmp[,,, 1:sum(new.mfts %in% curr.mfts)] <-
+      wtop[,,, 1:sum(new.mfts %in% curr.mfts)]
+    wtop <<- tmp
+    rm(tmp)
+  }
+  
+  # know when to stop
+  last.L <- dis$extent["NLAY"]
+  last.mfts <- last(new.mfts)
+  
+  # read in head data
+  mfL <- mfts <- 0L
+  cat("reading head data:\n")
+  cat(str_dup("/", sum(new.mfts %in% curr.mfts)))
+  while(mfts != last.mfts || mfL != last.L){
+    # time step, stress period
+    tssp <- readBin(hdcon, "integer", 2L, 4L)
+    mfts <- gwtime[paste(rev(tssp), collapse = "_"), "i"]
+    
+    # skip simulation time
+    readBin(hdcon, "double", 2L, 4L)
+    
+    # parameter type, should be Head
+    arty <- nicearname(readChar(hdcon, 16L))
+    stopifnot(arty == "Head")
+    
+    # skip CR count, get layer number
+    mfL <- readBin(hdcon, "integer", 3L, 4L)[3L]
+    
+    # which time step index to store the next array (if at all)
+    tspos <- which(new.mfts == mfts)
+    
+    if(length(tspos)){
+      # put data into array
+      gwdata$data[,, mfL, tspos, arty] <<-
+        readBin(hdcon, "double", prod(dis$extent[c("NCOL", "NROW")]), 4L)
+      
+      # determine wtop
+      # wtop (water top) is the top of the water in the cell
+      # it is the lower of Head or the cell top
+      # in MODPATH, z offset is defined as the proportionate vertical
+      #  position between the cell base and the water top
+      wtop[,, mfL, tspos] <<-
+        ifelse(dis$elev[,, mfL] <= gwdata$data[,, mfL, tspos, "Head"],
+               dis$elev[,, mfL], gwdata$data[,, mfL, tspos, "Head"])
+      if(mfL == last.L) cat("|")
+    }else{
+      # this time step is before the requested range (normally only for the
+      #  first time round)
+      readBin(hdcon, "double", prod(dis$extent[c("NCOL", "NROW")]), 4L)
+      if(mfL == last.L) cat(".")
+    }
+  }; cat("\n")
+  
+  # read in flow data
+  mfts <- 0L
+  cat("reading flow data:\n")
+  cat(str_dup("/", sum(new.mfts %in% curr.mfts)))
+  while(mfts != last.mfts){
+    # time step, stress period
+    tssp <- readBin(flcon, "integer", 2L, 4L)
+    mfts <- gwtime[paste(rev(tssp), collapse = "_"), "i"]
+    
+    # parameter type
+    arty <- nicearname(readChar(flcon, 16L))
+    
+    # skip CRL count
+    readBin(flcon, "integer", 3L, 4L)
+    
+    # which time step index to store the next array (if at all)
+    tspos <- which(new.mfts == mfts)
+    
+    # if this is a required parameter, put into array, else skip
+    if(length(tspos) && arty %chin% dimnames(gwdata$data)[[5L]]){
+      gwdata$data[,,, tspos, arty] <<-
+        readBin(flcon, "double",
+                prod(dis$extent[c("NCOL", "NROW", "NLAY")]), 4L)
+      cat(substr(arty, 1L, 1L))
+    }else{
+      # parameter or time step not requested; skip
+      readBin(flcon, "double",
+              prod(dis$extent[c("NCOL", "NROW", "NLAY")]), 4L)
+      cat(".")
+    }
+  }; cat("\n")
+  
+  invisible()
 }
-
-#find HDRY
-if(file.exists(paste0(mfdir, mfrt, ".lpf"))){
-  HDRY <- scan(paste0(mfdir, mfrt, ".lpf"), list(integer(), double(), integer()), 1L, comment.char = "#")[[2L]]
-}else if(file.exists(paste0(mfdir, mfrt, ".bcf"))){
-  HDRY <- scan(paste0(mfdir, mfrt, ".bcf"), list(integer(), double(), integer()), 1L, comment.char = "#")[[2L]]
-}else{
-  if(interactive()){
-    HDRY <- eval(parse(text = (readline("no value for HDRY found from LPF or BCF files; give the expected value for dry cells.  Note that unidentified dry cells can lead to an infinite loop.  Put value: "))))
-  }else warning("No value for HDRY found.  This value is normally found as the second item of the BCF or LPF package files.  Make the appropriate file available or else write a line in the input script: \"HDRY <- ...\" to define.")
-}
-if(exists("HDRY") && !lRAM) wtop[abs(wtop) > abs(HDRY)*.99 & abs(wtop) < abs(HDRY)*1.01] <- NA
-#dry cells might as well be no-flow for this algorithm
-#approximate matching because very big HDRY values cause problems with double precision for exact matching
-#assumed that HDRY is well outside range of proper head values
 
 
 # input to MODPATH --------------------------------------------------------
@@ -271,9 +290,10 @@ if(write.dat || !file.exists(paste0(dmrt, ".dat")))
 
 # simulation --------------------------------------------------------------
 
-#time steps: ensured that they do not extend beyond the time period of the MODFLOW model
+# time steps: ensured that they do not extend beyond the time period of the
+#  MODFLOW model
 if(start.t < MFt0) start.t <- MFt0
-if(end.t > last(gwdata$time) + MFt0) end.t <- last(gwdata$time) + MFt0
+if(end.t > last(gwtime$t) + MFt0) end.t <- last(gwtime$t) + MFt0
 tvals <- seq(start.t, end.t, Delta.t)
 
 # ensure get to end even if duration is not multiple of Delta.t
@@ -338,42 +358,50 @@ if(exists("load.init") && load.init){
 colord <- c("x", "y", "L", "zo", "m")
 relstate0 <- data.table(x = xy0[, 1L], y = xy0[, 2L], L = as.integer(L), zo = zo)
 
-#plot wells on go? not an option with lRAM = TRUE
-if(plot.on.go && !lRAM) pw <- "Wells" %in% dimnames(gwdata$data)[[5]] else pw <- FALSE
-if(lRAM2){
-  truegw <- list(gccs = {
-    csp <- dis$DELR
-    if(identical(names(csp), "CNSTNT")) csp <- unname(rep(csp, dis$extent["NCOL"]))
-    cumsum(c(0, csp))
-  }, grcs = {
-    rsp <- dis$DELC
-    if(identical(names(rsp), "CNSTNT")) rsp <- unname(rep(rsp, dis$extent["NROW"]))
-    cumsum(c(0, rsp))
-  })
-}
+# plot wells on go? currently disabled
+# best way to re-enable would be to use read.WEL function
+pw <- FALSE
 
 #a rectangle representing the model bound
-if(!lRAM2){
-  MFdx <- diff(range(gwdata$gccs)); MFdy <- diff(range(gwdata$grcs))
-}else{
-  MFdx <- diff(range(truegw$gccs)); MFdy <- diff(range(truegw$grcs))
-}
-bbox.poly <- cbind(x = c(0, MFdx, MFdx, 0) + MFxy0[1L], y = c(0, 0, MFdy, MFdy) + MFxy0[2L])
+MFdx <- diff(range(gwdata$gccs))
+MFdy <- diff(range(gwdata$grcs))
+bbox.poly <- cbind(x = c(0, MFdx, MFdx, 0) + MFxy0[1L],
+                   y = c(0, 0, MFdy, MFdy) + MFxy0[2L])
+
+# initialise groundwater data arrays
+gwdata$time <- 0
+gwdata$data <- array(0, c(dis$extent[c("NCOL", "NROW", "NLAY")], 1L,
+                          unname(3L + (dis$extent["NLAY"] > 1L) + tr)),
+                     list(NULL, NULL, NULL, "0_0",
+                          c("Head",
+                            "FlowRightFace",
+                            "FlowFrontFace",
+                            if(dis$extent["NLAY"] > 1L) "FlowLowerFace",
+                            if(tr) "Storage")))
+wtop <- array(0, c(dis$extent[c("NCOL", "NROW", "NLAY")], 1L))
+new.mfts <- 0L
 
 for(tPt in 2:nts){
   st.time <- Sys.time()
   
-  # if using low RAM option one, load the required MODFLOW time steps into gwdata
+  # load required MODFLOW data for this time step
+  # - currently loaded time steps
+  curr.mfts <- new.mfts
+  # - time range required
+  t0 <- tvals[tPt - 1L]; t1 <- tvals[tPt]
+  # - MODFLOW time steps which are required to cover that time range
+  mfts0 <- cellref.loc(t0, c(0, gwtime$t) + MFt0)
+  mfts1 <- cellref.loc(t1, c(0, gwtime$t) + MFt0)
+  #  -- case in which t1 is the same as the end of the MODFLOW model
+  if(is.na(mfts1)) mfts1 <- nrow(gwtime)
+  # - update time values describing the ends of these MODFLOW time steps
+  gwdata$time <- gwtime[mfts0:mfts1, "t"]
+  # - the set of MODFLOW time steps required
+  new.mfts <- mfts0:mfts1
   
-  if(lRAM){
-    t0 <- tvals[tPt]; t1 <- tvals[tPt + 1L]
-    mfts0 <- cellref.loc(t0, c(0, mftime) + MFt0)
-    mfts1 <- cellref.loc(t1, c(0, mftime) + MFt0)
-    nects <- sp_ts.ts[mfts0:mfts1,]
-    gwdata[c("data", "time")] <- eval(datatimeexpr)
-    
-    wtop <- eval(wtopexpr)
-    if(exists("HDRY")) wtop[abs(wtop) > abs(HDRY)*.99 & abs(wtop) < abs(HDRY)*1.01] <- NA
+  # - update the arrays (if necessary)
+  if(!identical(curr.mfts, new.mfts)){
+    renew.gwdata(curr.mfts, new.mfts, dis$extent["NLAY"] > 1L, tr)
   }
   
   # start where left off
@@ -423,7 +451,9 @@ for(tPt in 2:nts){
   # propagation: execute the transport algorithm for the current time step
   # advection, sinks and reactions, dispersion
   
-  OUTts <- prop(state, t.new, dt, newcbf, phi_e, if(sorb) statei, if(sorb) Rf, sorb)
+  OUTts <- prop(state, t.new, dt, newcbf, phi_e,
+                if(sorb) statei, if(sorb) Rf, sorb,
+                new.mfts)
   if(sorb){
     state <- OUTts[[1L]]; statei <- OUTts[[2L]]
   }else state <- OUTts
@@ -495,15 +525,21 @@ for(tPt in 2:nts){
     mfts <- cellref.loc(tvals[tPt - 1L], c(0, gwdata$time) + MFt0)
     for(lay in sort(unique(c(mob[[tPt - 1L]]$L, rel[[tPt - 1L]]$L)))){
       #plot model active region, with constant heads shown in blue
-      with(if(lRAM2) truegw else gwdata,
+      with(gwdata,
            MFimage(bas$IBOUND[,, lay],
                    gccs + MFxy0[1L], grcs + MFxy0[2L],
                    col = c("blue", "grey", "white"), zlim = c(-1, 1),
                    xlab = "easting", ylab = "northing"))
-      #plot particles, with opacity indicating mass
-      mob[[tPt - 1L]][L == lay, points(x, y, col = rgb(.63, .13, .94, m[L == lay]/maxm), pch = 16L)]
+      # plot particles, with grey shade indicating mass
+      setkey(mob[[tPt - 1L]], m)
+      mob[[tPt - 1L]][L == lay,
+                      points(x, y,
+                             col = grey(1 - mean(m)/maxm),
+                             cex = .3, pch = 16L),
+                      by = m%/%(median(m, TRUE)/2)]
       if(!is.null(rel[[tPt - 1L]]))
-        rel[[tPt - 1L]][L == lay, points(x, y, col = rgb(.63, .13, .94, m[L == lay]/maxm), pch = 16L)]
+        rel[[tPt - 1L]][L == lay, points(x, y, col = "darkred",
+                                         cex = .3, pch = 16L)]
       
       #add title and indication of mass magnitude
       title(main = paste0("t = ", tvals[tPt - 1L], ", layer ", lay),
@@ -529,6 +565,8 @@ for(tPt in 2:nts){
   print(diff(c(st.time, release = rls.time, propagate = prop.time, coalesce = co.time, plot = plot.time)))
 }
 
+close(hdcon)
+close(flcon)
 
 # post-process ------------------------------------------------------------
 
