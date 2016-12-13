@@ -27,25 +27,6 @@ if(plot.on.go || write.dat || !file.exists(paste0(dmrt, ".dat")))
 if(!exists("sorb")) sorb <- FALSE
 
 
-# utilities ---------------------------------------------------------------
-
-# a method for using index matrices with NetCDFs without needing to read a
-#  whole array
-nc.imtx <- function(ncfile, variable, imtx){
-  ndims <- as.integer(var.inq.nc(ncfile, variable)$ndims)
-  stopifnot(identical(ndims, ncol(imtx)))
-  
-  rgs <- apply(imtx, 2L, range)
-  
-  ar <- var.get.nc(ncfile, variable, rgs[1L,], apply(rgs, 2L, diff) + 1L,
-                   collapse = FALSE)
-  
-  imtx_mod <- sapply(1:ndims, function(d) imtx[, d] - rgs[1L, d] + 1L)
-  
-  ar[imtx_mod]
-}
-
-
 # perform checks before starting ------------------------------------------
 
 # check that there is correct number of release rate functions
@@ -528,20 +509,31 @@ setcolorder(mob, c("ts", letters[24:26], "L", "zo", "m"))
 if(sorb) setcolorder(immob, c("ts", letters[24:26], "L", "zo", "m"))
 setcolorder(rel, c("ts", letters[24:26], "L", "zo", "m"))
 
-#kernel density estimate and plot
+## kernel density estimate and plot --
 if(!ThreeDK) nkcell <- nkcell[1:2] # for safety
 ksOUT <- array(0, dim = c(nkcell, ts = length(tvals)))
 ksDATA <- NULL
-Vkcell <- MFdx*MFdy*(if(ThreeDK) diff(Kzlim) else 1)/prod(nkcell[1:ifelse(ThreeDK, 3L, 2L)]) # ks cell volume
+# ks cell volume
+Vkcell <- MFdx*MFdy*(if(ThreeDK) diff(Kzlim) else 1)/prod(nkcell[1:ifelse(ThreeDK, 3L, 2L)])
 cat("Kernel Smooth: timestep      ")
-mob[, {
-  #perform the kernel smooth in 2 or 3 dimensions
+mob[!is.na(z), {
+  # perform the kernel smooth in 2 or 3 dimensions
+  # - H: smoothing matrix
+  # - binned: slight approximation, sufficient for visualisation
+  # - xmin: minima in all dimensions
+  # - xmax: maxima in all dimensions
+  # - w: weights. kde insists that these must sum to 1, so mass is divided
+  #    by the mean mass.  This is corrected later by multiplying the result
+  #    by the sum of the mass.
   k <- kde(cbind(x, y, if(ThreeDK) z),
-           H = diag(c(rep(smd[1L]^2, 2L), if(ThreeDK) smd[2L]^2), ifelse(ThreeDK, 3L, 2L)), # should be ^3 if ThreeDK?
+           H = {
+             diag(c(rep(smd[1L]^2, 2L),if(ThreeDK) smd[2L]^2),
+                  ifelse(ThreeDK, 3L, 2L))
+           },
            bgridsize = nkcell, binned = TRUE,
-           xmin = c(MFxy0, if(ThreeDK) Kzlim[1L]), # minima in all dimensions
-           xmax = c(MFxy0 + c(MFdx, MFdy), if(ThreeDK) Kzlim[2L]), # maxima in all dimensions
-           w = m/mean(m)) # weights (kde insists that weights sum to the number of points, corrected later)
+           xmin = c(MFxy0, if(ThreeDK) Kzlim[1L]),
+           xmax = c(MFxy0 + c(MFdx, MFdy), if(ThreeDK) Kzlim[2L]),
+           w = m/mean(m))
   
   # scale the results to represent concentration
   if(ThreeDK){
@@ -561,14 +553,18 @@ ksDATA$time <- tvals
 ksDATA$nkcell <- nkcell
 ksDATA$Vkcell <- Vkcell
 
+## simulation end time --
 sim.end <- Sys.time()
 
+## save results --
 cat("saving...\n")
 list.save(list(plume = mob,
                sorbed = if(sorb) immob,
                release = rel,
-               KSplume = list(k = ksOUT, info = ksDATA, "smooth" = smd[if(ThreeDK) 1:2 else 1L],
-                              "number of divisions" = nkcell, "kcell volume or area" = Vkcell),
+               KSplume = list(k = ksOUT, info = ksDATA,
+                              "smooth" = smd[if(ThreeDK) 1:2 else 1L],
+                              "number of divisions" = nkcell,
+                              "kcell volume or area" = Vkcell),
                fluxout = fluxout,
                degradedmass = degraded,
                lostmass = massloss,
@@ -577,7 +573,7 @@ list.save(list(plume = mob,
                         "D" = c(DL = DL, DT = DT, DV = if(ThreeDD) DV),
                         "vdepD" = vdepD,
                         "retain vertical loss" = if(ThreeDD) retain.vloss else NA),
-               react = mget(c("sorb", "Rf", "lambda", "decaysorbed")),
+               react = mget(c("sorb", if(sorb) "Rf", "lambda", "decaysorbed")),
                porosity = phi_e,
                release.loc = data.frame(xy0, L = L, zo = zo),
                release.rates = rel.fun,

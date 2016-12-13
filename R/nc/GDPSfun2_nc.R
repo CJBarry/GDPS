@@ -352,7 +352,7 @@ coalesce <- function(state, cd, mm = 0, t){
   lthk <- state[, {
     imtop <- cbind(C, R, L, mfts); imbot <- cbind(C, R, L + 1L)
     if(any(is.na(imtop)) || any(is.na(imbot))) cat({
-      "NA particles: coalescing will not work properly"
+      "NA particles: coalescing will not work properly\n"
     })
     nc.imtx(wtop, "wtop", imtop) - nc.imtx(gwdata, "elev", imbot)
   }]

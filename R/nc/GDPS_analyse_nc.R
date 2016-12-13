@@ -3,74 +3,19 @@
 source("C:/Users/cjb309/Dropbox/Scripts/R/plottools.R")
 library("plyr"); library("data.table"); library("RNetCDF")
 
-#' "Which" for NetCDF arrays
-#' 
-#' @description 
-#' A version of "which" for NetCDF datasets that does not require prior
-#' loading of arrays and avoids loading the whole of large arrays at once.
-#'
-#' @param ncfile NetCDF connection object
-#' @param variable variable name within NetCDF data set
-#' @param FUN function to operate on array, which should produce a logical
-#' vector or array
-#' @param arr.ind,useNames passed to which
-#' @param size.threshold how large can the array be before the function
-#' performs on chunks?
-#' @param ... additional arguments to FUN
-#'
-#' @return
-#' integer vector (arr.ind = FALSE) or matrix (arr.ind = TRUE)
-#' @export
-#'
-#' @examples
-which.nc <- function(ncfile, variable, FUN = Negate(is.na), ..., arr.ind = FALSE,
-                     useNames = TRUE, size.threshold = 1e7){
-  # get dimensions of array
-  ards <- sapply(lapply(var.inq.nc(ncfile, variable)$dimids,
-                        dim.inq.nc, ncfile = ncfile),
-                 `[[`, "length")
-  nards <- length(ards)
-  arsize <- prod(ards)
-  FUN <- match.fun(FUN)
-  
-  if(arsize > size.threshold){
-    # large array, perform in chunks
-    nchunk <- prod(ds) %/% size.threshold + 1L
-    chsize <- ceiling(last(ds)/nchunk)
-    
-    # define chunk indices - roughly equal sections along highest index
-    chunks <- lapply(1:nchunk, function(i){
-      (1:last(ds))[(1:last(ds) %/% chsize + 1L) == i]
-    })
-    
-    sections <- lapply(chunks, function(ch){
-      x <- var.get.nc(ncfile, variable, c(rep(NA, nards - 1L), ch[1L]),
-                      c(rep(NA, nards - 1L), last(ch) - ch[1L] + 1L),
-                      collapse = FALSE)
-      wh <- which(FUN(x, ...), arr.ind, useNames)
-      if(arr.ind){
-        wh[, nards] <- wh[, nards] + ch[1L] - 1L
-      }else wh <- wh + prod(ards[-nards])*(ch[1L] - 1L)
-      wh
-    })
-    
-    if(arr.ind){
-      do.call(rbind, sections)
-    }else c(sections, recursive = TRUE)
-  }else{
-    # small array, perform all together
-    x <- var.get.nc(ncfile, variable, collapse = FALSE)
-    which(FUN(x, ...), arr.ind, useNames)
-  }
-}
 
 #plots colour-flooded kernel-smoothed plume with optional particle overlay
 #also plots the model boundaries using the bas file and the active wells at the time represented by the plot
 #the plots are saved as png files
-plot.plume <- function(res, gwdata, bas, folder, prefix, p = TRUE, sc = TRUE, tss = NULL, to.png = TRUE,
-                       width = 7.5, height = 6, unit = "in", resolution = 144, mai = c(1, 1, .5, .5),
-                       pcol = "#00000020", plot.pars = list(), breaks = 10^seq(-6, 0, .5),
-                       time.to.date = TRUE, all.tss = FALSE, baslay = 1L, ...){
+plot.plume <- function(res, gwdata, bas, folder, prefix,
+                       p = TRUE, sc = TRUE, tss = NULL, to.png = TRUE,
+                       width = 7.5, height = 6, unit = "in",
+                       resolution = 144, mai = c(1, 1, .5, .5),
+                       pcol = "#00000020", plot.pars = list(),
+                       breaks = 10^seq(-6, 0, .5),
+                       xlim = NULL, ylim = NULL,
+                       time.to.date = TRUE, all.tss = FALSE, baslay = 1L,
+                       riv = TRUE, ...){
   if(is.null(tss) && !to.png && !all.tss) stop("really plot all time steps in R graphics device?\n",
                                                "use all.tss = TRUE if so")
   if(is.null(tss)) tss <- seq_along(res$time)
@@ -88,14 +33,18 @@ plot.plume <- function(res, gwdata, bas, folder, prefix, p = TRUE, sc = TRUE, ts
     }
     
     ThreeDK <- length(res$KSplume$info$eval.points) == 3L
-    with(res$KSplume, do.call(image, c(list(info$eval.points[[1L]], info$eval.points[[2L]],
-                                            if(ThreeDK) rowMeans(k[,,, tpt], dims = 2L) else k[,, tpt],
-                                            col = colfl(12L), breaks = breaks,
-                                            xlab = "easting", ylab = "northing", asp = 1,
-                                            main = if(time.to.date){
-                                              paste("year", floor(res$time[tpt]/365.25 + 1900))
-                                            }else paste("time =", signif(res$time[tpt], 3L))),
-                                       plot.pars)))
+    with(res$KSplume, do.call(image, {
+      # arguments to image as a list
+      c(list(info$eval.points[[1L]], info$eval.points[[2L]],
+             if(ThreeDK) rowMeans(k[,,, tpt], dims = 2L) else k[,, tpt],
+             col = colfl(12L), breaks = breaks,
+             xlim = xlim, ylim = ylim,
+             xlab = "easting", ylab = "northing", asp = 1,
+             main = if(time.to.date){
+               paste("year", floor(res$time[tpt]/365.25 + 1900))
+             }else paste("time =", signif(res$time[tpt], 3L))),
+        plot.pars)
+    }))
     
     gccs <- var.get.nc(gwdata, "gccs")
     grcs <- var.get.nc(gwdata, "grcs")
@@ -105,11 +54,22 @@ plot.plume <- function(res, gwdata, bas, folder, prefix, p = TRUE, sc = TRUE, ts
     mfts <- cellref.loc(res$time[tpt],
                         c(0, var.get.nc(gwdata, "time")) + MFt0)
     
+    # plot wells if present
     if("Wells" %chin% var.get.nc(gwdata, "parameters")){
       MFimage(rowSums(var.get.nc(gwdata, "Wells",
                          c(1, 1, 1, mfts), c(NA, NA, NA, 1),
-                         collapse = FALSE), dims = 2L),
-              gccs, grcs, 0:1, c("transparent", "darkred"), add = TRUE)
+                         collapse = FALSE), dims = 2L) != 0,
+              gccs + MFx0, grcs + MFy0, 0:1,
+              c("transparent", "darkred"), add = TRUE)
+    }
+    
+    # plot river if requested and present
+    if(riv && "RiverLeakage" %chin% var.get.nc(gwdata, "parameters")){
+      MFimage(rowSums(var.get.nc(gwdata, "RiverLeakage",
+                                 c(1, 1, 1, mfts), c(NA, NA, NA, 1),
+                                 collapse = FALSE), dims = 2L) != 0,
+              gccs + MFx0, grcs + MFy0, 0:1,
+              c("transparent", "#60A080"), add = TRUE)
     }
     
     if(p) res$plume[ts == tpt,
@@ -126,16 +86,27 @@ plot.plume <- function(res, gwdata, bas, folder, prefix, p = TRUE, sc = TRUE, ts
 #obsC.unitmatch gives the scaling to get from the units of res to the units of obs
 #e.g. if res is in kg/m^3 and obsC is in ug/l, then obsC.unitmatch should be 1e6, which is the default
 #if multiple.res = TRUE, res should be a list of results lists which will be plotted on top of each other
-plot.abstracted <- function(res, gwdata, obsC, year.range = NULL, lcol = "red",
-                            obsC.unitmatch = 1e6, unit.label = "\u00b5g/l", multiple.res  = FALSE,
-                            mr.labels = paste("simulation", 1:length(res)), legpos = "topright",
-                            time.to.date = TRUE){
-  WellCR <- which.nc(gwdata, "Wells", `!=`, 0, arr.ind = TRUE)
+plot.abstracted <- function(res, gwdata, obsC = NULL, year.range = NULL,
+                            plot.non.obs = TRUE,
+                            lcol = "red", obsC.unitmatch = 1e6,
+                            unit.label = "\u00b5g/l",
+                            multiple.res  = FALSE,
+                            mr.labels = paste("simulation", 1:length(res)),
+                            legpos = "topright", time.to.date = TRUE){
+  wellCR <- unique(which.nc(gwdata, "Wells", `!=`, 0, arr.ind = TRUE)[, 1:2], MARGIN = 1L)
   rownames(wellCR) <- apply(wellCR, 1L, function(cr) paste0("C", cr[1L], "R", cr[2L]))
   
   MFt0 <- if(!multiple.res) res$MFbounds$origin["t"] else sapply(res, with, MFbounds$origin["t"])
   
   tadapt <- if(time.to.date) function(t) t/365.25 + 1900 else identity
+  
+  if(plot.non.obs){
+    non.obs <- sapply(rownames(wellCR)[!rownames(wellCR) %in% names(obsC)],
+                      function(...) data.frame(time = double(0L),
+                                               conc = double(0L)),
+                      simplify = FALSE)
+    obsC <- c(obsC, non.obs)
+  }
   
   l_ply(names(obsC), function(w){
     obs <- obsC[[w]]
@@ -151,18 +122,17 @@ plot.abstracted <- function(res, gwdata, obsC, year.range = NULL, lcol = "red",
     
     if(any(c(J, recursive = TRUE) > 0) || any(obs$conc > 0)){
       Q <- if(!multiple.res){
-        mfwell <- cbind(time = var.get.nc(gwdata, "time"),
-                        Q = -colSums(var.get.nc(gwdata, "Wells",
-                                                c(cr, NA, NA),
-                                                c(1L, 1L, NA, NA))))
-        with(mfwell, approx(time + MFt0, colSums(-data[cr[1], cr[2],,, "Wells"]),
-                            res$time, "constant", f = 1)$y)
+        mfwell <- data.frame(time = var.get.nc(gwdata, "time"),
+                             Q = -colSums(var.get.nc(gwdata, "Wells",
+                                                     c(cr, NA, NA),
+                                                     c(1L, 1L, NA, NA))))
+        with(mfwell, approx(time + MFt0, Q, res$time, "constant", f = 1)$y)
       }else lapply(1:length(res), function(n){
-        mfwell <- cbind(time = var.get.nc(gwdata, "time"),
-                        Q = -colSums(var.get.nc(gwdata, "Wells",
-                                                c(cr, NA, NA),
-                                                c(1L, 1L, NA, NA))))
-        with(mfwell, approx(time + MFt0[n], colSums(-data[cr[1], cr[2],,, "Wells"]),
+        mfwell <- data.frame(time = var.get.nc(gwdata, "time"),
+                             Q = -colSums(var.get.nc(gwdata, "Wells",
+                                                     c(cr, NA, NA),
+                                                     c(1L, 1L, NA, NA))))
+        with(mfwell, approx(time + MFt0[n], Q,
                             res$time, "constant", f = 1)$y)
       })
       
@@ -255,7 +225,8 @@ plot.abstracted <- function(res, gwdata, obsC, year.range = NULL, lcol = "red",
 }
 
 # plot the mass balance through time
-plot.mass.balance <- function(res, time.to.date = TRUE, main = ""){
+plot.mass.balance <- function(res, time.to.date = TRUE, main = "",
+                              mass.unit = "kg"){
   # input from sources
   in.sc <- with(res, {
     mtmp <- double(length(time))
@@ -298,7 +269,8 @@ plot.mass.balance <- function(res, time.to.date = TRUE, main = ""){
   ylm <- c(0, max(in.sc, act.pl, act.i, out.abs, out.lost, out.dec, na.rm = TRUE))
   
   plot(date, in.sc, type = "l", col = "red", ylim = ylm,
-       xlab = if(time.to.date) "date" else "time", ylab = "mass (kg)", main = main)
+       xlab = if(time.to.date) "date" else "time",
+       ylab = paste0("mass (", mass.unit, ")"), main = main)
   lines(date, act.pl)
   lines(date, act.i, lty = 2)
   lines(date, out.abs, col = "green")
