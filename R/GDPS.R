@@ -534,9 +534,8 @@ for(tPt in 2:nts){
       setkey(mob[[tPt - 1L]], m)
       mob[[tPt - 1L]][L == lay,
                       points(x, y,
-                             col = grey(1 - mean(m)/maxm),
-                             cex = .3, pch = 16L),
-                      by = m%/%(median(m, TRUE)/2)]
+                             col = grey((1 - m/maxm)*.7),
+                             cex = .3, pch = 16L)]
       if(!is.null(rel[[tPt - 1L]]))
         rel[[tPt - 1L]][L == lay, points(x, y, col = "darkred",
                                          cex = .3, pch = 16L)]
@@ -643,30 +642,30 @@ ksDATA$Vkcell <- Vkcell
 
 sim.end <- Sys.time()
 
-if(save.res) cat("saving...\n")
-if(save.res) list.save(list(plume = mob,
-                            sorbed = if(sorb) immob,
-                            release = rel,
-                            KSplume = list(k = ksOUT, info = ksDATA, "smooth" = smd[if(ThreeDK) 1:2 else 1L],
-                                           "number of divisions" = nkcell, "kcell volume or area" = Vkcell),
-                            fluxout = fluxout,
-                            degradedmass = degraded,
-                            lostmass = massloss,
-                            time = tvals,
-                            D = list("3Ddisp" = ThreeDD,
-                                     "D" = c(DL = DL, DT = DT, DV = if(ThreeDD) DV),
-                                     "vdepD" = vdepD,
-                                     "retain vertical loss" = if(ThreeDD) retain.vloss else NA),
-                            react = mget(c("sorb", "Rf", "lambda", "decaysorbed")),
-                            porosity = phi_e,
-                            release.loc = data.frame(xy0, L = L, zo = zo),
-                            release.rates = rel.fun,
-                            MFbounds = list(origin = c(MFxy0, t = MFt0),
-                                            bounds = bbox.poly),
-                            coalesce = mget(c("cd", "mm", "maxp")),
-                            description = description,
-                            timings = c(start = sim.start, end = sim.end)),
-                       file = paste0(dmrt, "_", info, ".rds"))
+cat("saving...\n")
+list.save(list(plume = mob,
+               sorbed = if(sorb) immob,
+               release = rel,
+               KSplume = list(k = ksOUT, info = ksDATA, "smooth" = smd[if(ThreeDK) 1:2 else 1L],
+                              "number of divisions" = nkcell, "kcell volume or area" = Vkcell),
+               fluxout = fluxout,
+               degradedmass = degraded,
+               lostmass = massloss,
+               time = tvals,
+               D = list("3Ddisp" = ThreeDD,
+                        "D" = c(DL = DL, DT = DT, DV = if(ThreeDD) DV),
+                        "vdepD" = vdepD,
+                        "retain vertical loss" = if(ThreeDD) retain.vloss else NA),
+               react = mget(c("sorb", if(sorb) "Rf", "lambda", "decaysorbed")),
+               porosity = phi_e,
+               release.loc = data.frame(xy0, L = L, zo = zo),
+               release.rates = rel.fun,
+               MFbounds = list(origin = c(MFxy0, t = MFt0),
+                               bounds = bbox.poly),
+               coalesce = mget(c("cd", "mm", "maxp")),
+               description = description,
+               timings = c(start = sim.start, end = sim.end)),
+          file = paste0(dmrt, "_", info, ".rds"))
 
 setwd(od)
 cat("Execution complete.  Results saved to\n", mfdir, dmrt, "_", info, ".rds\n", sep = "")
