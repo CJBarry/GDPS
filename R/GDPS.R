@@ -90,7 +90,7 @@ renew.gwdata <- function(curr.mfts, new.mfts, readFLF, readS){
     tmp <- double(prod(dis$extent[c("NCOL", "NROW", "NLAY")])*
                     length(new.mfts)*(3L + readFLF + readS))
     dim(tmp) <- c(dis$extent[c("NCOL", "NROW", "NLAY")],
-                  length(new.mfts), (3L + readFLF + readS))
+                  length(new.mfts), unname(3L + readFLF + readS))
     dimnames(tmp)[4:5] <- list(names(gwdata$time)[new.mfts],
                                c("Head",
                                  "FlowRightFace",
