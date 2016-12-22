@@ -39,66 +39,120 @@ if(length(rel.fun) != nrow(xy0)) stop("The number of release functions in rel.fu
 
 # load groundwater data ---------------------------------------------------
 
-## check that gwnc isn't already connected to a NetCDF
-if(exists("gwdata") &&
-   !identical(class(try(file.inq.nc(gwdata))), "try-error")){
-  close.nc(gwdata)
-}
-
-## groundwater data as NetCDF
-gwnc <- paste0(mfdir, mfrt, ".nc")
-if(file.exists(gwnc) && !fresh.mfdata){
-  gwdata <- open.nc(gwnc)
-}else{
-  GW.nc(mfdir, mfrt, gwnc,
-        title = paste("MODFLOW data set created from GDPS_nc.R script,",
-                      "using", paste0(mfdir, mfrt), "simulation results"))
-  gwdata <- open.nc(gwnc)
-}
-
-dtits <- c("NCOL", "NROW", "NLAY", "NTS")
-ds <- c(sapply(dtits, dim.inq.nc, ncfile = gwdata)["length",],
-        recursive = TRUE)
-spds <- ds[1:3]
-nmfts <- ds[4L]
-
-## find co-ordinate origins and start time
-MFxy0 <- c(x = att.get.nc(gwdata, "NC_GLOBAL", "origin-x"),
-           y = att.get.nc(gwdata, "NC_GLOBAL", "origin-y"))
-MFt0 <- att.get.nc(gwdata, "NC_GLOBAL", "start_time")
-
-# get water top, write to new NetCDF if necessary
-if(file.exists("wtop.nc")){
-  wtop <- open.nc("wtop.nc")
-}else{
-  wtop <- create.nc("wtop.nc", large = TRUE)
-  att.put.nc(wtop, "NC_GLOBAL", "title", "NC_CHAR",
-             "height of saturated groundwater above datum")
-  att.put.nc(wtop, "NC_GLOBAL", "history", "NC_CHAR",
-             paste("Created on", date(), "by MassTrack"))
-  
-  Map(dim.def.nc, dimname = dtits, dimlength = ds,
-      MoreArgs = list(ncfile = wtop))
-  
-  var.def.nc(wtop, "wtop", "NC_FLOAT", dtits)
-  att.copy.nc(gwdata, "Head", "missing_value", wtop, "wtop")
-  
-  # lt is layer top
-  lt <- c(var.get.nc(gwdata, "elev", count = spds))
-  for(i in 1:nmfts){
-    var.put.nc(wtop, "wtop", {
-      # wt is water head
-      wt <- c(var.get.nc(gwdata, "Head", c(1L, 1L, 1L, i), c(spds, 1L)))
-      
-      # layer top or water head, whichever is greater
-      ifelse(lt > wt, wt, lt)
-    }, c(1L, 1L, 1L, i), c(spds, 1L))
+# function for determining the water top (that is, the water table if
+#  unsaturated and the cell top if saturated) and writing to a NetCDF
+get.wtop.nc <- function(gw.nc, fnm, nts.dtit = "NTS"){
+  if(file.exists(fnm)){
+    wtop <- open.nc(fnm)
+  }else{
+    wtop <- create.nc(fnm, large = TRUE)
+    att.put.nc(wtop, "NC_GLOBAL", "title", "NC_CHAR",
+               "height of saturated groundwater above datum")
+    att.put.nc(wtop, "NC_GLOBAL", "history", "NC_CHAR",
+               paste("Created on", date(), "by MassTrack"))
+    
+    dim.def.nc(wtop, "NCOL", dim.inq.nc(gw.nc, "NCOL")$length)
+    dim.def.nc(wtop, "NROW", dim.inq.nc(gw.nc, "NROW")$length)
+    dim.def.nc(wtop, "NLAY", dim.inq.nc(gw.nc, "NLAY")$length)
+    dim.def.nc(wtop, nts.dtit, dim.inq.nc(gw.nc, nts.dtit)$length)
+    
+    var.def.nc(wtop, "wtop", "NC_FLOAT",
+               c("NCOL", "NROW", "NLAY", nts.dtit))
+    att.copy.nc(gw.nc, "Head", "missing_value", wtop, "wtop")
+    
+    # lt is layer top
+    lt <- c(var.get.nc(gw.nc, "elev", count = spds))
+    for(i in 1:nmfts){
+      var.put.nc(wtop, "wtop", {
+        # wt is water head
+        wt <- c(var.get.nc(gw.nc, "Head", c(1L, 1L, 1L, i), c(spds, 1L)))
+        
+        # layer top or water head, whichever is greater
+        ifelse(lt > wt, wt, lt)
+      }, c(1L, 1L, 1L, i), c(spds, 1L))
+    }
+    
+    att.copy.nc(gw.nc, "Head", "units", wtop, "wtop")
+    att.copy.nc(gw.nc, "NC_GLOBAL", "datum", wtop, "NC_GLOBAL")
   }
   
-  att.copy.nc(gwdata, "Head", "units", wtop, "wtop")
-  att.copy.nc(gwdata, "NC_GLOBAL", "datum", wtop, "NC_GLOBAL")
+  wtop
 }
-stopifnot(identical(class(wtop), "NetCDF"))
+
+if(!exists("multiple.nc")) multiple.nc <- FALSE
+if(!multiple.nc){
+  # groundwater data is within 1 NetCDF file
+  ## check that gwnc isn't already connected to a NetCDF
+  if(exists("gwdata") &&
+     !identical(class(try(file.inq.nc(gwdata))), "try-error")){
+    close.nc(gwdata)
+  }
+  
+  ## groundwater data as NetCDF
+  gwnc <- paste0(mfdir, mfrt, ".nc")
+  if(file.exists(gwnc) && !fresh.mfdata){
+    gwdata <- open.nc(gwnc)
+  }else{
+    GW.nc(mfdir, mfrt, gwnc,
+          title = paste("MODFLOW data set created from GDPS_nc.R script,",
+                        "using", paste0(mfdir, mfrt), "simulation results"))
+    gwdata <- open.nc(gwnc)
+  }
+  
+  dtits <- c("NCOL", "NROW", "NLAY", "NTS")
+  ds <- c(sapply(dtits, dim.inq.nc, ncfile = gwdata)["length",],
+          recursive = TRUE)
+  spds <- ds[1:3]
+  nmfts <- ds[4L]
+  
+  ## find co-ordinate origins and start time
+  MFxy0 <- c(x = att.get.nc(gwdata, "NC_GLOBAL", "origin-x"),
+             y = att.get.nc(gwdata, "NC_GLOBAL", "origin-y"))
+  MFt0 <- att.get.nc(gwdata, "NC_GLOBAL", "start_time")
+  
+  ## extract co-ordinate vectors (relative to origin)
+  gccs <- var.get.nc(gwdata, "gccs")
+  grcs <- var.get.nc(gwdata, "grcs")
+  gwtime <- var.get.nc(gwdata, "time")
+  
+  # get water top, write to new NetCDF if necessary
+  wtop <- get.wtop.nc(paste0(mfrt, "_wtop.nc"))
+  stopifnot(identical(class(wtop), "NetCDF"))
+}else{
+  # groundwater data is within multiple NetCDFs
+  # this assumes that the NetCDFs have already been created, so there is no
+  #  routine to make them if they don't exist
+  # also assumes that the successive NetCDFs are in time order and that
+  #  there is no overlap in time
+  gwdatas <- lapply(gwncs, open.nc)
+  
+  # get spatial dimensions
+  dtits <- c("NCOL", "NROW", "NLAY")
+  ds <- c(sapply(dtits, dim.inq.nc, ncfile = gwdatas[[1L]])["length",],
+          recursive = TRUE)
+  spds <- ds
+  
+  ## find co-ordinate origins and start time
+  MFxy0 <- c(x = att.get.nc(gwdatas[[1L]], "NC_GLOBAL", "origin-x"),
+             y = att.get.nc(gwdatas[[1L]], "NC_GLOBAL", "origin-y"))
+  MFt0 <- att.get.nc(gwdatas[[1L]], "NC_GLOBAL", "start_time")
+  
+  ## extract co-ordinate vectors (relative to origin)
+  gccs <- var.get.nc(gwdatas[[1L]], "gccs")
+  grcs <- var.get.nc(gwdatas[[1L]], "grcs")
+  
+  # start times for each dataset
+  st.times <- sapply(gwdatas, att.get.nc, "NC_GLOBAL", "start_time")
+  
+  gwtime <- c(lapply(lapply(gwdatas, var.get.nc, variable = "time"),
+                     `+`, st.times),
+              recursive = TRUE) - MFt0
+  
+  # get or make wtop file for each dataset
+  wtops <- Map(get.wtop.nc, gw.nc = gwdatas,
+               fnm = paste0(mfrt, "_wtop_", 1:length(gwdatas), ".nc"),
+               MoreArgs = list(nts.dtit = "sNTS"))
+}
 
 
 # input to MODPATH --------------------------------------------------------
@@ -193,25 +247,29 @@ if(write.dat || !file.exists(paste0(dmrt, ".dat")))
 
 # simulation --------------------------------------------------------------
 
-## extract co-ordinate vectors
-gccs <- var.get.nc(gwdata, "gccs")
-grcs <- var.get.nc(gwdata, "grcs")
-gwtime <- var.get.nc(gwdata, "time")
-
 ## time steps
 # it is ensured that they do not extend beyond the time period of the
 #  MODFLOW model
 if(start.t < MFt0) start.t <- MFt0
 if(end.t > last(gwtime) + MFt0) end.t <- last(gwtime) + MFt0
-tvals <- seq(start.t, end.t, Delta.t)
-
-# ensure get to end even if duration is not multiple of Delta.t
-if(last(tvals) != end.t) tvals <- c(tvals, end.t)
+#
+# tvals includes:
+# - regular time intervals from start.t to end.t
+# - it is ensured that end.t is included even if end.t - start.t is not a
+#    multiple of Delta.t
+# - if multiple NetCDF datasets are used for gwdata, then the start times
+#    of each are included; this ensures that only one dataset is required
+#    during a DRW time step
+tvals <- sort(unique(c(seq(start.t, end.t, Delta.t), end.t,
+                       if(multiple.nc){
+                         st.times[st.times >= MFt0 &
+                                    st.times <= last(gwtime) + MFt0]
+                       })))
 
 # number of time steps
 nts <- length(tvals)
 
-cat("simulation period is from", tvals[1L], "to", tail(tvals, 1L), "\n")
+cat("simulation period is from", tvals[1L], "to", last(tvals), "\n")
 
 #initialise outflux data
 fluxout <- vector("list", nts)
@@ -270,17 +328,28 @@ relstate0 <- data.table(x = xy0[, 1L], y = xy0[, 2L],
 
 ## plot wells on go? not an option with lRAM = TRUE
 pw <- if(plot.on.go){
-  "Wells" %in% var.get.nc(gwdata, "parameters")
+  "Wells" %in% var.get.nc(if(multiple.nc) gwdatas[[1L]] else gwdata,
+                          "outvars")
 }else FALSE
 
 ## a rectangle representing the model bound
-MFdx <- diff(range(var.get.nc(gwdata, "gccs")))
-MFdy <- diff(range(var.get.nc(gwdata, "grcs")))
+MFdx <- diff(range(gccs))
+MFdy <- diff(range(grcs))
 bbox.poly <- cbind(x = c(0, MFdx, MFdx, 0) + MFxy0[1L],
                    y = c(0, 0, MFdy, MFdy) + MFxy0[2L])
 
 for(tPt in 2:nts){
   st.time <- Sys.time()
+  
+  t.old <- tvals[tPt - 1L]; t.new <- tvals[tPt]; dt <- t.new - t.old
+  
+  # find which groundwater data set is required for this timestep, if necessary
+  if(multiple.nc){
+    dsetno <- cellref.loc(t.old, c(st.times, end.t))
+    gwdata <- gwdatas[[dsetno]]
+    wtop <- wtops[[dsetno]]
+    mftscorr <- att.get.nc(gwdata, "subset_start_ts") - 1L
+  }else mftscorr <- 0L
   
   ## start where left off ----
   
@@ -298,15 +367,15 @@ for(tPt in 2:nts){
     }else statei[, ts := NULL]
   }
   
-  t.old <- tvals[tPt - 1L]; t.new <- tvals[tPt]; dt <- t.new - t.old
-  
   ## mass releases during this time step ----
   
   # add new release?
   relm <- vapply(rel.fun, function(fun){
-    #mass released in time step found by integration of release rate functions
+    # mass released in time step found by integration of release rate
+    #  functions
     tpts <- seq(t.old + dt/200, t.new - dt/200, length.out = 100L)
-    vs <- vapply(tpts, fun, double(1L)) #fun need not be vectorised
+    # doesn't assume that fun is vectorised
+    vs <- vapply(tpts, fun, double(1L))
     sum(vs)*dt/100
   }, double(1L))
   
@@ -343,12 +412,15 @@ for(tPt in 2:nts){
   
   # advection, sinks and reactions, dispersion
   
-  OUTts <- prop(state, t.new, dt, newcbf, phi_e, if(sorb) statei, if(sorb) Rf, sorb)
+  OUTts <- prop(state, t.new, dt, newcbf, phi_e,
+                if(sorb) statei, if(sorb) Rf, sorb)
   if(sorb){
     state <- OUTts[[1L]]; statei <- OUTts[[2L]]
   }else state <- OUTts
   rm(OUTts)
-  newcbf <- F #only needed the first time
+  
+  # only need to create a CBF file the first time round
+  newcbf <- FALSE
   state[, c("L", "zo") := list(ifelse(is.na(L), 0L, L),
                                ifelse(is.na(zo), NA, zo))]
   if(sorb) statei[, c("L", "zo") := list(ifelse(is.na(L), 0L, L),
@@ -393,8 +465,8 @@ for(tPt in 2:nts){
     !is.na(mob[[tPt]]$L)
   
   if(any(!(inmod <- inmodxy & inmodz))){
-    # the following algorithm determines which dimension (2D) the mass has
-    #  escaped out of
+    # the following algorithm determines which side (2D) the mass has
+    #  escaped through
     outmod <- mob[[tPt]][!inmod]
     outmod[, c("bottom", "left", "top", "right", "other") := {
       modmid <- colMeans(bbox.poly)
@@ -421,6 +493,7 @@ for(tPt in 2:nts){
   
   if(plot.on.go && tPt != 1L && !is.null(mob[[tPt - 1L]])){
     maxm <- max(mob[[tPt - 1L]]$m, rel[[tPt - 1L]]$m)
+    lqm <- quantile(mob[[tPt - 1L]], .25, na.rm = TRUE)
     mfts <- cellref.loc(tvals[tPt - 1L], c(0, gwtime) + MFt0)
     for(lay in sort(unique(c(mob[[tPt - 1L]]$L, rel[[tPt - 1L]]$L)))){
       # plot model active region, with constant heads shown in blue
@@ -430,12 +503,15 @@ for(tPt in 2:nts){
               xlab = "easting", ylab = "northing")
       
       # plot particles, with opacity indicating mass
-      mob[[tPt - 1L]][L == lay, {
-        points(x, y, col = rgb(.63, .13, .94, m[L == lay]/maxm), pch = 16L)
+      mob[[tPt - 1L]][L == lay & m > lqm, {
+        points(x, y, col = "black", pch = 16L, cex = .3)
       }]
       
-      if(!is.null(rel[[tPt - 1L]]))
-        rel[[tPt - 1L]][L == lay, points(x, y, col = rgb(.63, .13, .94, m[L == lay]/maxm), pch = 16L)]
+      if(!is.null(rel[[tPt - 1L]])){
+        rel[[tPt - 1L]][L == lay,
+                        points(x, y, col = rgb(.63, .13, .94),
+                               pch = 16L, cex = .4)]
+      }
       
       # add title and indication of mass magnitude
       title(main = paste0("t = ", tvals[tPt - 1L], ", layer ", lay),
@@ -489,21 +565,40 @@ setkey(fluxout, ts)
 
 massloss <- do.call(cbind, massloss)
 
-#determine z values
+# determine z values
 cat("z calculation...\n")
 zexpr <- expression({
   C <- cellref.loc(x, gccs + MFxy0[1L], FALSE)
   R <- cellref.loc(y, grcs + MFxy0[2L], TRUE)
-  mfts <- cellref.loc(ts, c(0, gwtime) + MFt0, FALSE)
+  mftscorr <- if(multiple.nc){
+    att.get.nc(gwdata[[dsn]], "subset_start_ts") - 1L
+  }else 0L
+  mfts <- cellref.loc(ts, c(0, gwtime) + MFt0, FALSE) - mftscorr
   
-  bot <- nc.imtx(gwdata, "elev", cbind(C, R, L + 1L))
-  thk <- nc.imtx(wtop, "wtop", cbind(C, R, L, mfts)) - bot
+  bot <- nc.imtx(if(multiple.nc) gwdatas[[dsn]] else gwdata,
+                 "elev", cbind(C, R, L + 1L))
+  thk <- nc.imtx(if(multiple.nc) wtops[[dsn]] else wtop,
+                 "wtop", cbind(C, R, L, mfts)) - bot
   bot + zo*thk
 })
 
-mob[, z := eval(zexpr)]
-if(sorb) immob[, z := eval(zexpr)]
-rel[, z := eval(zexpr)]
+if(!multiple.nc){
+  mob[, z := eval(zexpr)]
+  if(sorb) immob[, z := eval(zexpr)]
+  rel[, z := eval(zexpr)]
+}else{
+  mob[, dsn := cellref.loc(tvals[ts], c(st.times, end.t + 1))]
+  mob[, z := eval(zexpr), by = dsn]
+  mob[, dsn := NULL]
+  if(sorb){
+    immob[, dsn := cellref.loc(tvals[ts], c(st.times, end.t + 1))]
+    immob[, z := eval(zexpr), by = dsn]
+    immob[, dsn := NULL]
+  }
+  rel[, dsn := cellref.loc(tvals[ts], c(st.times, end.t + 1))]
+  rel[, z := eval(zexpr), by = dsn]
+  rel[, dsn := NULL]
+}
 
 setcolorder(mob, c("ts", letters[24:26], "L", "zo", "m"))
 if(sorb) setcolorder(immob, c("ts", letters[24:26], "L", "zo", "m"))
@@ -514,7 +609,8 @@ if(!ThreeDK) nkcell <- nkcell[1:2] # for safety
 ksOUT <- array(0, dim = c(nkcell, ts = length(tvals)))
 ksDATA <- NULL
 # ks cell volume
-Vkcell <- MFdx*MFdy*(if(ThreeDK) diff(Kzlim) else 1)/prod(nkcell[1:ifelse(ThreeDK, 3L, 2L)])
+Vkcell <- MFdx*MFdy*(if(ThreeDK) diff(Kzlim) else 1)/
+  prod(nkcell[1:ifelse(ThreeDK, 3L, 2L)])
 cat("Kernel Smooth: timestep      ")
 mob[!is.na(z), {
   # perform the kernel smooth in 2 or 3 dimensions
@@ -584,5 +680,13 @@ list.save(list(plume = mob,
                timings = c(start = sim.start, end = sim.end)),
           file = paste0(dmrt, "_", info, ".rds"))
 
+if(multiple.nc){
+  l_ply(gwdatas, close.nc)
+  l_ply(wtops, close.nc)
+}else{
+  close.nc(gwdata)
+  close.nc(wtop)
+}
 setwd(od)
-cat("Execution complete.  Results saved to\n", mfdir, dmrt, "_", info, ".rds\n", sep = "")
+cat("Execution complete.  Results saved to\n",
+    mfdir, dmrt, "_", info, ".rds\n", sep = "")

@@ -63,6 +63,11 @@ prop <- function(state, t.new, Delta.t, newcbf, por, statei = NULL, Rf = 1, sorb
   
   # time correction
   ptldf[, t := t + MFt0]
+  
+  # time step correction
+  if(multiple.nc) ptldf[, timestep := timestep - mftscorr]
+  
+  # run MassTrack
   mt <- ptl.masstrack2(ptldf, gwdata, wtop, por, state$m, retain.storage = TRUE,
                        outflux = TRUE, loss = TRUE, tlumpoutflux = TRUE,
                        react.loss = TRUE, outflux.array = FALSE,
@@ -191,13 +196,14 @@ prop <- function(state, t.new, Delta.t, newcbf, por, statei = NULL, Rf = 1, sorb
   }, by = ptlno]
   
   # MODFLOW timestep number
-  mfts <- cellref.loc(t.new, c(0, gwtime) + MFt0)
+  mfts <- cellref.loc(t.new, c(0, gwtime) + MFt0) - mftscorr
   if(is.na(mfts)){
     # this covers case for which the last tval is the same as the end time
     #  of the MODFLOW model
     # because cellref.loc uses >= and <, NA is returned in this case
     # MODFLOW timestep number re-assessed
-    mfts <- cellref.loc(t.new - Delta.t/100, c(0, gwtime) + MFt0)
+    mfts <- cellref.loc(t.new - Delta.t/100, c(0, gwtime) + MFt0) -
+      mftscorr
   }
   
   if(ThreeDD) xyzm[, c("zo", "L") := {
@@ -348,7 +354,7 @@ coalesce <- function(state, cd, mm = 0, t){
   # row numbers
   R <- cellref.loc(state$y, grcs + MFxy0[2L], T)
   # timestep number; need t0 here?
-  mfts <- cellref.loc(t, c(0, gwtime) + MFt0, F)
+  mfts <- cellref.loc(t, c(0, gwtime) + MFt0, F) - mftscorr
   lthk <- state[, {
     imtop <- cbind(C, R, L, mfts); imbot <- cbind(C, R, L + 1L)
     if(any(is.na(imtop)) || any(is.na(imbot))) cat({
